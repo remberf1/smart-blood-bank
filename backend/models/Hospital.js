@@ -9,7 +9,8 @@ const hospitalSchema = new mongoose.Schema({
   },
   contactPhone: { type: String, required: true },
   adminUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  deliveryStatus: { type: String, enum: ['pending', 'in-transit', 'delivered'], default: 'delivered' }
 });
 
 hospitalSchema.index({ location: '2dsphere' });

@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Inventory = require('../models/Inventory');
 const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = require('../controllers/wpsEngine');
+const { auth, isAdmin } = require('../middleware/auth');
 
 // POST - Add inventory
-router.post('/', async (req, res) => {
+router.post('/',auth,async (req, res) => {
   try {
     console.log('POST /api/inventory called');
     const { hospitalId, resourceType, bloodGroup, units, oxygenCylinderCount, oxygenFillStatus } = req.body;
@@ -77,7 +78,7 @@ router.get('/hospital/:hospitalId', async (req, res) => {
 });
 
 // PUT - Update blood units
-router.put('/blood/:inventoryId', async (req, res) => {
+router.put('/blood/:inventoryId',auth, async (req, res) => {
   try {
     const { units } = req.body;
     const inventory = await Inventory.findByIdAndUpdate(
@@ -93,7 +94,7 @@ router.put('/blood/:inventoryId', async (req, res) => {
 });
 
 // PUT - Update oxygen
-router.put('/oxygen/:inventoryId', async (req, res) => {
+router.put('/oxygen/:inventoryId',auth, async (req, res) => {
   try {
     const { oxygenCylinderCount, oxygenFillStatus } = req.body;
     const inventory = await Inventory.findByIdAndUpdate(
@@ -109,7 +110,7 @@ router.put('/oxygen/:inventoryId', async (req, res) => {
 });
 
 // DELETE - Remove inventory
-router.delete('/:inventoryId', async (req, res) => {
+router.delete('/:inventoryId',auth, async (req, res) => {
   try {
     const inventory = await Inventory.findByIdAndDelete(req.params.inventoryId);
     if (!inventory) return res.status(404).json({ error: 'Inventory not found' });

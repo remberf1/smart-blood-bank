@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
-module.exports = (req, res, next) => {
+// Main authentication middleware
+const auth = (req, res, next) => {
   // Get token from header
   const token = req.header('x-auth-token') || req.header('Authorization')?.replace('Bearer ', '');
   
@@ -17,7 +18,7 @@ module.exports = (req, res, next) => {
   }
 };
 
-// Optional: Role-based middleware
+// Role-based middleware
 const isAdmin = (req, res, next) => {
   if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
     return res.status(403).json({ error: 'Access denied. Admin only.' });
@@ -31,5 +32,6 @@ const isSuperAdmin = (req, res, next) => {
   }
   next();
 };
+
 
 module.exports = { auth, isAdmin, isSuperAdmin };

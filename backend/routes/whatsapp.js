@@ -9,6 +9,17 @@ const { triggerSOS, processDonorResponse } = require('../services/sosService');
 
 const MessagingResponse = twilio.twiml.MessagingResponse;
 
+// Validate that incoming webhook requests are genuinely from Twilio.
+// Uses TWILIO_AUTH_TOKEN + the X-Twilio-Signature header. Set
+// TWILIO_VALIDATE=false only for local testing without a public URL.
+// If behind a proxy/ngrok, set TWILIO_WEBHOOK_URL to the exact public URL.
+const validateTwilio =
+  process.env.TWILIO_VALIDATE === 'false'
+    ? (req, res, next) => next()
+    : twilio.webhook(
+        process.env.TWILIO_WEBHOOK_URL ? { url: process.env.TWILIO_WEBHOOK_URL } : {}
+      );
+
 // User session storage
 const userSessions = new Map();
 
@@ -96,7 +107,7 @@ function formatOxygenResults(oxygenData) {
 }
 
 // Main webhook endpoint
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', validateTwilio, async (req, res) => {
   const twiml = new MessagingResponse();
   const incomingMsg = (req.body.Body || '').trim();
   const userPhone = req.body.From || '';
