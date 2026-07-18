@@ -32,11 +32,24 @@ function getUserSession(phone) {
   if (!userSessions.has(phone)) {
     userSessions.set(phone, {
       step: null,
-      lat: 7.7667,
-      lon: 4.5667
+      lat: null,
+      lon: null,
+      hasLocation: false, // set true once the user shares a WhatsApp location pin
     });
   }
   return userSessions.get(phone);
+}
+
+function getLocationPrompt() {
+  return `📍 *SHARE YOUR LOCATION*
+
+To find the nearest blood or donors, please share your location:
+
+1️⃣ Tap 📎 (attach)
+2️⃣ Choose *Location*
+3️⃣ Send *Current location*
+
+We use this only to rank results by distance.`;
 }
 
 function getMainMenu() {
@@ -139,15 +152,115 @@ router.post('/webhook', validateTwilio, async (req, res) => {
     res.end(twiml.toString());
     return;
   }
-  
-  // Handle main menu numbers
-  if (incomingMsg === '0') {
+
+  // Handle a shared WhatsApp location pin (Body is empty for these messages)
+  if (req.body.Latitude && req.body.Longitude) {
+    const lat = parseFloat(req.body.Latitude);
+    const lon = parseFloat(req.body.Longitude);
+    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+      session.lat = lat;
+      session.lon = lon;
+      session.hasLocation = true;
+
+      if (session.step === 'awaiting_location_for_blood') {
+        session.step = 'awaiting_blood_group';
+        twiml.message(`📍 Location saved!\n\n${getBloodGroupMenu()}`);
+      } else if (session.step === 'awaiting_location_for_sos') {
+        session.step = 'awaiting_sos_blood_group';
+        twiml.message(`📍 Location saved!\n\n🚨 *SOS EMERGENCY* 🚨\n\nReply with the blood group needed (e.g., O+, A-, B+).`);
+      } else {
+        twiml.message(`📍 Location saved! We'll use it to find the nearest blood and donors.\n\n${getMainMenu()}`);
+      }
+    } else {
+      twiml.message(`❌ Could not read that location. Please try sharing your current location again.`);
+    }
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml.toString());
+    return;
+  }
+
+  // In-flow steps take precedence over bare menu numbers, so a numeric blood
+  // group (e.g. "1" = A+) isn't mistaken for main-menu option 1.
+  if (session.step === 'awaiting_sos_blood_group') {
+    const bloodMatch = incomingMsg.toUpperCase().match(/[ABO]\+|[ABO]-/);
+    if (bloodMatch) {
+      const bloodGroup = bloodMatch[0];
+      const sosResult = await triggerSOS(bloodGroup, session.lat, session.lon, userPhone.replace('whatsapp:', ''), 15);
+
+      if (sosResult.donorsFound === 0) {
+        twiml.message(`⚠️ *NO DONORS AVAILABLE*\n\nNo registered ${bloodGroup} donors found within ${sosResult.radiusKm}km.\n\nPlease contact your nearest hospital directly.`);
+      } else {
+        twiml.message(`🚨 *SOS ALERT SENT* 🚨\n\n✅ ${sosResult.donorsAlerted} ${bloodGroup} donors alerted within ${sosResult.radiusKm}km.\n\nWe will notify you if a donor responds.\n\nFor immediate help, please contact your nearest hospital.`);
+      }
+      session.step = null;
+    } else {
+      twiml.message(`❌ Please reply with a valid blood group (e.g., O+, A-, B+, AB-):`);
+    }
+  }
+  else if (session.step === 'awaiting_blood_group') {
+    let bloodGroup = null;
+
+    if (incomingMsg.match(/^[1-8]$/)) {
+      bloodGroup = bloodGroupOptions[incomingMsg];
+    } else {
+      const matched = incomingMsg.toUpperCase().match(/[ABO]\+|[ABO]-/);
+      if (matched) bloodGroup = matched[0];
+    }
+
+    if (bloodGroup) {
+      const hospitalsWithStock = await Inventory.aggregate([
+        { $match: { resourceType: 'blood', bloodGroup: bloodGroup, units: { $gt: 0 } } },
+        { $lookup: { from: 'hospitals', localField: 'hospitalId', foreignField: '_id', as: 'hospital' } },
+        { $unwind: '$hospital' }
+      ]);
+
+      if (hospitalsWithStock.length === 0) {
+        twiml.message(`⚠️ No ${bloodGroup} blood available.\n\nType 1 for another blood type, SOS for emergency alert, or MENU for main menu.`);
+      } else {
+        const maxUnits = Math.max(...hospitalsWithStock.map(h => h.units));
+        const scored = hospitalsWithStock.map(item => {
+          const distance = haversineDistance(
+            session.lat, session.lon,
+            item.hospital.location.coordinates[1],
+            item.hospital.location.coordinates[0]
+          );
+          const distanceScore = getDistanceScore(distance);
+          const recencyScore = getRecencyScore(item.lastUpdatedAt);
+          const stockScore = getStockScore(item.units, maxUnits);
+          const wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * distanceScore);
+
+          return {
+            name: item.hospital.name,
+            contactPhone: item.hospital.contactPhone,
+            distance: distance.toFixed(1),
+            unitsAvailable: item.units,
+            wps: wps
+          };
+        });
+
+        const ranked = scored.sort((a, b) => b.wps - a.wps);
+        const reply = formatBloodResults(bloodGroup, ranked, session.lat, session.lon);
+        session.step = null;
+        twiml.message(reply);
+      }
+    } else {
+      twiml.message(`❌ Invalid blood group. Please reply with a number (1-8), type e.g. "O+", or MENU to start over.`);
+    }
+  }
+  // Main menu numbers
+  else if (incomingMsg === '0') {
     session.step = null;
     twiml.message(getMainMenu());
   }
   else if (incomingMsg === '1') {
-    session.step = 'awaiting_blood_group';
-    twiml.message(getBloodGroupMenu());
+    // Blood search needs the user's location for distance ranking.
+    if (!session.hasLocation) {
+      session.step = 'awaiting_location_for_blood';
+      twiml.message(getLocationPrompt());
+    } else {
+      session.step = 'awaiting_blood_group';
+      twiml.message(getBloodGroupMenu());
+    }
   }
   else if (incomingMsg === '2') {
     session.step = null;
@@ -171,75 +284,13 @@ router.post('/webhook', validateTwilio, async (req, res) => {
   }
   // === SOS HANDLER ===
   else if (incomingMsg === '4') {
-    session.step = 'awaiting_sos_blood_group';
-    twiml.message(`🚨 *SOS EMERGENCY* 🚨\n\nPlease reply with the blood group needed (e.g., O+, A-, B+, etc.)`);
-  }
-  // Handle SOS blood group response
-  else if (session.step === 'awaiting_sos_blood_group') {
-    const bloodMatch = incomingMsg.toUpperCase().match(/[ABO]\+|[ABO]-/);
-    if (bloodMatch) {
-      const bloodGroup = bloodMatch[0];
-      const sosResult = await triggerSOS(bloodGroup, session.lat, session.lon, userPhone.replace('whatsapp:', ''), 15);
-      
-      if (sosResult.donorsFound === 0) {
-        twiml.message(`⚠️ *NO DONORS AVAILABLE*\n\nNo registered ${bloodGroup} donors found within ${sosResult.radiusKm}km.\n\nPlease contact your nearest hospital directly.`);
-      } else {
-        twiml.message(`🚨 *SOS ALERT SENT* 🚨\n\n✅ ${sosResult.donorsAlerted} ${bloodGroup} donors alerted within ${sosResult.radiusKm}km.\n\nWe will notify you if a donor responds.\n\nFor immediate help, please contact your nearest hospital.`);
-      }
-      session.step = null;
+    // SOS needs the user's location to find nearby donors.
+    if (!session.hasLocation) {
+      session.step = 'awaiting_location_for_sos';
+      twiml.message(getLocationPrompt());
     } else {
-      twiml.message(`❌ Please reply with a valid blood group (e.g., O+, A-, B+, AB-):`);
-    }
-  }
-  // Handle blood group selection
-  else if (session.step === 'awaiting_blood_group') {
-    let bloodGroup = null;
-    
-    if (incomingMsg.match(/^[1-8]$/)) {
-      bloodGroup = bloodGroupOptions[incomingMsg];
-    } else {
-      const matched = incomingMsg.toUpperCase().match(/[ABO]\+|[ABO]-/);
-      if (matched) bloodGroup = matched[0];
-    }
-    
-    if (bloodGroup) {
-      const hospitalsWithStock = await Inventory.aggregate([
-        { $match: { resourceType: 'blood', bloodGroup: bloodGroup, units: { $gt: 0 } } },
-        { $lookup: { from: 'hospitals', localField: 'hospitalId', foreignField: '_id', as: 'hospital' } },
-        { $unwind: '$hospital' }
-      ]);
-      
-      if (hospitalsWithStock.length === 0) {
-        twiml.message(`⚠️ No ${bloodGroup} blood available.\n\nType 1 for another blood type, SOS for emergency alert, or MENU for main menu.`);
-      } else {
-        const maxUnits = Math.max(...hospitalsWithStock.map(h => h.units));
-        const scored = hospitalsWithStock.map(item => {
-          const distance = haversineDistance(
-            session.lat, session.lon,
-            item.hospital.location.coordinates[1],
-            item.hospital.location.coordinates[0]
-          );
-          const distanceScore = getDistanceScore(distance);
-          const recencyScore = getRecencyScore(item.lastUpdatedAt);
-          const stockScore = getStockScore(item.units, maxUnits);
-          const wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * distanceScore);
-          
-          return {
-            name: item.hospital.name,
-            contactPhone: item.hospital.contactPhone,
-            distance: distance.toFixed(1),
-            unitsAvailable: item.units,
-            wps: wps
-          };
-        });
-        
-        const ranked = scored.sort((a, b) => b.wps - a.wps);
-        const reply = formatBloodResults(bloodGroup, ranked, session.lat, session.lon);
-        session.step = null;
-        twiml.message(reply);
-      }
-    } else {
-      twiml.message(`❌ Invalid blood group. Please reply with a number:\n\n1️⃣ A+    2️⃣ A-\n3️⃣ B+    4️⃣ B-\n5️⃣ AB+   6️⃣ AB-\n7️⃣ O+    8️⃣ O-`);
+      session.step = 'awaiting_sos_blood_group';
+      twiml.message(`🚨 *SOS EMERGENCY* 🚨\n\nPlease reply with the blood group needed (e.g., O+, A-, B+, etc.)`);
     }
   }
   // Unknown input

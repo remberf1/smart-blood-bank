@@ -37,11 +37,16 @@ function getDistanceScore(distanceKm) {
   return 0;
 }
 
-// Recency score: inverse of minutes since last update (capped at 120 min)
+// Recency score: exponential decay by how long ago the stock was last updated.
+// Blood inventory is realistically updated on the order of hours/days, not
+// minutes, so a half-life of 24h keeps day-old data meaningfully weighted:
+//   0h -> 1.0, 24h -> 0.5, 48h -> 0.25, 72h -> 0.125.
+const RECENCY_HALF_LIFE_HOURS = 24;
 function getRecencyScore(lastUpdated) {
-  const minutesSince = (Date.now() - new Date(lastUpdated).getTime()) / (1000 * 60);
-  if (minutesSince >= 120) return 0;
-  return 1 / (1 + minutesSince);
+  if (!lastUpdated) return 0;
+  const hoursSince = (Date.now() - new Date(lastUpdated).getTime()) / (1000 * 60 * 60);
+  if (hoursSince <= 0) return 1;
+  return Math.pow(0.5, hoursSince / RECENCY_HALF_LIFE_HOURS);
 }
 
 // Stock score: normalized by max units in dataset

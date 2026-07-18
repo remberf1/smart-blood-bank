@@ -2,10 +2,11 @@ const express = require('express');
 const router = express.Router();
 const Hospital = require('../models/Hospital');
 const Inventory = require('../models/Inventory'); // To check if hospital has inventory before deleting
-const { auth, isAdmin } = require('../middleware/auth');
+const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
+const { canAccessHospital } = require('../middleware/roles');
 
-// ==================== CREATE HOSPITAL ====================
-router.post('/', auth, async (req, res) => {
+// ==================== CREATE HOSPITAL (superadmin only) ====================
+router.post('/', auth, isSuperAdmin, async (req, res) => {
   try {
     const { name, address, location, contactPhone } = req.body;
     
@@ -47,11 +48,14 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ==================== UPDATE HOSPITAL ====================
+// ==================== UPDATE HOSPITAL (own hospital or superadmin) ====================
 router.put('/:id', auth, async (req, res) => {
   try {
+    if (!canAccessHospital(req.user, req.params.id)) {
+      return res.status(403).json({ error: 'You can only edit your own hospital' });
+    }
     const { name, address, location, contactPhone } = req.body;
-    
+
     const hospital = await Hospital.findByIdAndUpdate(
       req.params.id,
       { name, address, location, contactPhone, updatedAt: Date.now() },
@@ -69,8 +73,8 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
-// ==================== DELETE HOSPITAL ====================
-router.delete('/:id', auth, async (req, res) => {
+// ==================== DELETE HOSPITAL (superadmin only) ====================
+router.delete('/:id', auth, isSuperAdmin, async (req, res) => {
   try {
     // First, check if hospital has any inventory
     const inventoryCount = await Inventory.countDocuments({ hospitalId: req.params.id });
@@ -120,6 +124,9 @@ router.get('/:id/inventory', async (req, res) => {
 // ==================== GET HOSPITALS WITH DELIVERY STATUS (Admin) ====================//
 router.put('/:id/delivery-status', auth, async (req, res) => {
   try {
+    if (!canAccessHospital(req.user, req.params.id)) {
+      return res.status(403).json({ error: 'You can only update your own hospital' });
+    }
     const { deliveryStatus } = req.body;
     const hospital = await Hospital.findByIdAndUpdate(req.params.id, { deliveryStatus }, { new: true });
     res.json(hospital);

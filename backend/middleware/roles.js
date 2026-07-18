@@ -5,4 +5,14 @@ const allowRoles = (...roles) => (req, res, next) => {
   return res.status(403).json({ error: 'Forbidden: insufficient permissions' });
 };
 
-module.exports = { allowRoles };
+// True if the user may act on the given hospital's data.
+// superadmin is global; admin/staff are limited to their own hospital.
+function canAccessHospital(user, hospitalId) {
+  if (!user) return false;
+  if (user.role === 'superadmin') return true;
+  return Boolean(
+    user.hospitalId && hospitalId && user.hospitalId.toString() === hospitalId.toString()
+  );
+}
+
+module.exports = { allowRoles, canAccessHospital };

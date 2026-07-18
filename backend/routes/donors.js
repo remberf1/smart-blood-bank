@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const QRCode = require("qrcode");
+const jwt = require("jsonwebtoken");
 const Donor = require("../models/Donor");
+const Inventory = require("../models/Inventory");
 const { auth, isAdmin } = require("../middleware/auth");
 
 // Format Nigerian phone numbers to E.164 format (+234...)
@@ -113,19 +115,16 @@ router.post("/register", async (req, res) => {
 
     await donor.save();
 
-    // Generate QR code with donor information
-    const qrData = {
-      donorId: donor._id,
-      name: donor.name,
-      bloodGroup: donor.bloodGroup,
-      phone: donor.phone,
-      eligibilityStatus: donor.eligibilityStatus,
-      lastDonationDate: donor.lastDonationDate,
-    };
+    // Generate QR code holding only a signed token (no PII in the QR itself).
+    // Staff scan it and the /verify endpoint resolves the donor server-side.
+    const qrToken = jwt.sign(
+      { donorId: donor._id, type: "donor-verify" },
+      process.env.JWT_SECRET
+    );
 
     let qrCodeUrl;
     try {
-      qrCodeUrl = await QRCode.toDataURL(JSON.stringify(qrData), {
+      qrCodeUrl = await QRCode.toDataURL(qrToken, {
         errorCorrectionLevel: "H",
         margin: 1,
         width: 300,
@@ -163,26 +162,72 @@ router.post("/verify", auth, async (req, res) => {
   try {
     const { qrData } = req.body;
 
-    // Parse QR data
-    let donorInfo;
+    // Resolve the donor id from the QR payload.
+    let donorId;
     try {
-      donorInfo = JSON.parse(qrData);
-    } catch (err) {
-      return res.status(400).json({ error: "Invalid QR code format" });
+      // New format: signed token containing only the donor id.
+      const decoded = jwt.verify(qrData, process.env.JWT_SECRET);
+      if (decoded.type !== "donor-verify" || !decoded.donorId) {
+        throw new Error("Not a donor-verify token");
+      }
+      donorId = decoded.donorId;
+    } catch (tokenErr) {
+      // Legacy fallback: QR codes issued before signing embedded plain JSON.
+      try {
+        donorId = JSON.parse(qrData).donorId;
+      } catch (jsonErr) {
+        return res.status(400).json({ error: "Invalid QR code" });
+      }
     }
 
     // Find donor by ID
-    const donor = await Donor.findById(donorInfo.donorId);
+    const donor = await Donor.findById(donorId);
     if (!donor) {
       return res.status(404).json({ error: "Donor not found" });
     }
 
-    // Update last donation date if this is a donation event
+    // Record a donation event: only eligible donors, then defer them and add
+    // a unit of their blood group to the recording hospital's inventory.
     if (req.body.recordDonation) {
+      if (donor.eligibilityStatus !== "eligible") {
+        return res.status(400).json({
+          error: `Donor is not eligible to donate (status: ${donor.eligibilityStatus})`,
+        });
+      }
+
+      // The donation is recorded at the verifying staff's hospital.
+      const hospitalId = req.user.hospitalId || req.body.hospitalId;
+      if (!hospitalId) {
+        return res.status(400).json({ error: "A hospitalId is required to record a donation" });
+      }
+
+      const bloodGroup = donor.bloodGroup;
+
       donor.lastDonationDate = new Date();
       donor.eligibilityStatus = "deferred";
       donor.deferralReason = "90 days waiting period after donation";
       await donor.save();
+
+      // +1 unit to that hospital's blood inventory (create the row if needed).
+      const inventory = await Inventory.findOneAndUpdate(
+        { hospitalId, resourceType: "blood", bloodGroup },
+        { $inc: { units: 1 }, $set: { lastUpdatedAt: Date.now() } },
+        { upsert: true, new: true }
+      );
+
+      return res.json({
+        verified: true,
+        donationRecorded: true,
+        inventory: { hospitalId, bloodGroup, units: inventory.units },
+        donor: {
+          name: donor.name,
+          bloodGroup: donor.bloodGroup,
+          phone: donor.phone,
+          eligibilityStatus: donor.eligibilityStatus,
+          lastDonationDate: donor.lastDonationDate,
+          deferralReason: donor.deferralReason,
+        },
+      });
     }
 
     res.json({

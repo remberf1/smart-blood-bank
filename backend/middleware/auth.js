@@ -11,6 +11,13 @@ const auth = (req, res, next) => {
   
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Reject donor tokens: they are signed with the same secret but must not
+    // be usable on staff/admin endpoints. Only User tokens carry `userId`.
+    if (!decoded.userId || decoded.role === 'donor') {
+      return res.status(403).json({ error: 'Not authorized for this resource' });
+    }
+
     req.user = decoded;
     next();
   } catch (err) {

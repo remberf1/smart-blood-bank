@@ -11,4 +11,12 @@ const inventorySchema = new mongoose.Schema({
   expiryAlerts: [{ bloodUnitId: String, expiryDate: Date }]
 });
 
+// One blood row per hospital+group: keeps the donation upsert race-safe and
+// stops the WPS aggregation from double-counting. Oxygen rows have a null
+// bloodGroup, so the partial filter leaves them unconstrained.
+inventorySchema.index(
+  { hospitalId: 1, resourceType: 1, bloodGroup: 1 },
+  { unique: true, partialFilterExpression: { resourceType: 'blood' } }
+);
+
 module.exports = mongoose.model('Inventory', inventorySchema);

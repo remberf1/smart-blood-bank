@@ -79,13 +79,6 @@ export default function ResourceRequestsPage() {
   });
   const router = useRouter();
 
-  fetch('http://localhost:5000/api/resource-requests/incoming', {
-  headers: { 'x-auth-token': localStorage.getItem('token') }
-})
-.then(r => r.json())
-.then(data => console.log('Incoming:', data))
-.catch(err => console.error(err));
-
   // Fetch all data
  const fetchData = async () => {
   try {
@@ -383,10 +376,10 @@ export default function ResourceRequestsPage() {
                 <Label>Resource Type</Label>
                 <Select
                   value={formData.resourceType}
-                  onValueChange={(val: "blood" | "oxygen") =>
+                  onValueChange={(val) =>
                     setFormData({
                       ...formData,
-                      resourceType: val,
+                      resourceType: (val ?? "blood") as "blood" | "oxygen",
                       bloodGroup: "",
                     })
                   }
@@ -407,7 +400,7 @@ export default function ResourceRequestsPage() {
                   <Select
                     value={formData.bloodGroup}
                     onValueChange={(val) =>
-                      setFormData({ ...formData, bloodGroup: val })
+                      setFormData({ ...formData, bloodGroup: val ?? "" })
                     }
                   >
                     <SelectTrigger>
@@ -431,7 +424,7 @@ export default function ResourceRequestsPage() {
                 <Select
                   value={formData.supplyingHospitalId}
                   onValueChange={(val) =>
-                    setFormData({ ...formData, supplyingHospitalId: val })
+                    setFormData({ ...formData, supplyingHospitalId: val ?? "" })
                   }
                   disabled={
                     formData.resourceType === "blood" && !formData.bloodGroup

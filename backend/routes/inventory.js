@@ -3,13 +3,18 @@ const router = express.Router();
 const Inventory = require('../models/Inventory');
 const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = require('../controllers/wpsEngine');
 const { auth, isAdmin } = require('../middleware/auth');
+const { canAccessHospital } = require('../middleware/roles');
 
 // POST - Add inventory
 router.post('/',auth,async (req, res) => {
   try {
     console.log('POST /api/inventory called');
     const { hospitalId, resourceType, bloodGroup, units, oxygenCylinderCount, oxygenFillStatus } = req.body;
-    
+
+    if (!canAccessHospital(req.user, hospitalId)) {
+      return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
+    }
+
     const inventory = new Inventory({
       hospitalId,
       resourceType,
@@ -81,13 +86,15 @@ router.get('/hospital/:hospitalId', async (req, res) => {
 router.put('/blood/:inventoryId',auth, async (req, res) => {
   try {
     const { units } = req.body;
-    const inventory = await Inventory.findByIdAndUpdate(
-      req.params.inventoryId,
-      { units, lastUpdatedAt: Date.now() },
-      { new: true }
-    );
-    if (!inventory) return res.status(404).json({ error: 'Inventory not found' });
-    res.json(inventory);
+    const existing = await Inventory.findById(req.params.inventoryId);
+    if (!existing) return res.status(404).json({ error: 'Inventory not found' });
+    if (!canAccessHospital(req.user, existing.hospitalId)) {
+      return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
+    }
+    existing.units = units;
+    existing.lastUpdatedAt = Date.now();
+    await existing.save();
+    res.json(existing);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -97,13 +104,16 @@ router.put('/blood/:inventoryId',auth, async (req, res) => {
 router.put('/oxygen/:inventoryId',auth, async (req, res) => {
   try {
     const { oxygenCylinderCount, oxygenFillStatus } = req.body;
-    const inventory = await Inventory.findByIdAndUpdate(
-      req.params.inventoryId,
-      { oxygenCylinderCount, oxygenFillStatus, lastUpdatedAt: Date.now() },
-      { new: true }
-    );
-    if (!inventory) return res.status(404).json({ error: 'Inventory not found' });
-    res.json(inventory);
+    const existing = await Inventory.findById(req.params.inventoryId);
+    if (!existing) return res.status(404).json({ error: 'Inventory not found' });
+    if (!canAccessHospital(req.user, existing.hospitalId)) {
+      return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
+    }
+    existing.oxygenCylinderCount = oxygenCylinderCount;
+    existing.oxygenFillStatus = oxygenFillStatus;
+    existing.lastUpdatedAt = Date.now();
+    await existing.save();
+    res.json(existing);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -112,8 +122,12 @@ router.put('/oxygen/:inventoryId',auth, async (req, res) => {
 // DELETE - Remove inventory
 router.delete('/:inventoryId',auth, async (req, res) => {
   try {
-    const inventory = await Inventory.findByIdAndDelete(req.params.inventoryId);
-    if (!inventory) return res.status(404).json({ error: 'Inventory not found' });
+    const existing = await Inventory.findById(req.params.inventoryId);
+    if (!existing) return res.status(404).json({ error: 'Inventory not found' });
+    if (!canAccessHospital(req.user, existing.hospitalId)) {
+      return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
+    }
+    await existing.deleteOne();
     res.json({ message: 'Inventory deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

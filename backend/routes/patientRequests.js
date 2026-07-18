@@ -4,7 +4,7 @@ const PatientRequest = require("../models/PatientRequest");
 const Inventory = require("../models/Inventory");
 const { allocateBlood } = require("../services/allocationService");
 const { auth } = require("../middleware/auth");
-const { allowRoles } = require("../middleware/roles");
+const { allowRoles, canAccessHospital } = require("../middleware/roles");
 
 // ------------------- Public (no authentication) -------------------
 // Create a new request (supports advance scheduling)
@@ -43,9 +43,12 @@ router.get("/track/:phone", async (req, res) => {
 });
 
 // ------------------- Hospital admin (authentication required) -------------------
-// Get all requests for a specific hospital (admin only)
+// Get all requests for a specific hospital (own hospital or superadmin)
 router.get("/hospital/:hospitalId", auth, async (req, res) => {
   try {
+    if (!canAccessHospital(req.user, req.params.hospitalId)) {
+      return res.status(403).json({ error: "You can only view your own hospital's requests" });
+    }
     const requests = await PatientRequest.find({ preferredHospitalId: req.params.hospitalId })
       .sort({ scheduledTime: 1, createdAt: 1 });
     res.json(requests);
@@ -61,6 +64,12 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
 
     const request = await PatientRequest.findById(req.params.id);
     if (!request) return res.status(404).json({ error: "Request not found" });
+
+    // Only the fulfilling/preferred hospital (or superadmin) may drive status.
+    const scopeHospitalId = request.allocatedHospitalId || request.preferredHospitalId;
+    if (!canAccessHospital(req.user, scopeHospitalId)) {
+      return res.status(403).json({ error: "You can only update your own hospital's requests" });
+    }
 
     // Deduct stock exactly once, on the transition into 'delivered'.
     // Atomic guarded decrement prevents negative stock and races.
@@ -100,11 +109,21 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
   }
 });
 
-// Keep the old PUT /:requestId for general updates (if needed)
-router.put("/:requestId", auth, async (req, res) => {
+// General update (admin/superadmin, own hospital only)
+router.put("/:requestId", auth, allowRoles("admin", "superadmin"), async (req, res) => {
   try {
-    const request = await PatientRequest.findByIdAndUpdate(req.params.requestId, req.body, { new: true });
+    const request = await PatientRequest.findById(req.params.requestId);
     if (!request) return res.status(404).json({ error: "Request not found" });
+
+    const scopeHospitalId = request.allocatedHospitalId || request.preferredHospitalId;
+    if (!canAccessHospital(req.user, scopeHospitalId)) {
+      return res.status(403).json({ error: "You can only update your own hospital's requests" });
+    }
+
+    // Don't allow moving a request to another hospital via this generic update.
+    const { preferredHospitalId, allocatedHospitalId, ...safeUpdate } = req.body;
+    Object.assign(request, safeUpdate, { updatedAt: Date.now() });
+    await request.save();
     res.json(request);
   } catch (err) {
     res.status(500).json({ error: err.message });
