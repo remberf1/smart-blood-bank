@@ -38,7 +38,9 @@ test('getDistanceScore anchors and monotonic decrease', () => {
 test('getRecencyScore: exponential decay, 24h half-life', () => {
   const now = Date.now();
   const at = (hrs) => new Date(now - hrs * 3600 * 1000);
-  assert.strictEqual(getRecencyScore(at(0)), 1);
+  // A now-or-future timestamp yields the full score (hoursSince <= 0).
+  assert.strictEqual(getRecencyScore(new Date(now + 60000)), 1);
+  assert.ok(getRecencyScore(at(0)) > 0.9999);
   assert.ok(Math.abs(getRecencyScore(at(24)) - 0.5) < 1e-3);
   assert.ok(Math.abs(getRecencyScore(at(48)) - 0.25) < 1e-3);
   assert.strictEqual(getRecencyScore(null), 0);

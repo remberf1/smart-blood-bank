@@ -30,9 +30,19 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Connect to MongoDB
+const { expireDueBatches } = require('./services/inventoryService');
+
+// Connect to MongoDB, then run (and schedule) the blood-expiry sweep.
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
+  .then(() => {
+    console.log('MongoDB connected');
+    const runSweep = () =>
+      expireDueBatches()
+        .then((n) => n && console.log(`Expired ${n} blood batch(es)`))
+        .catch((err) => console.error('Expiry sweep error:', err.message));
+    runSweep(); // once on startup
+    setInterval(runSweep, 60 * 60 * 1000).unref(); // hourly
+  })
   .catch(err => console.error('MongoDB connection error:', err));
 
 // Rate limiters

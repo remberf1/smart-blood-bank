@@ -2,6 +2,7 @@ require('dotenv').config();
 const twilio = require('twilio');
 const Donor = require('../models/Donor');
 const SOSRequest = require('../models/SOSRequest');
+const { normalizePhone } = require('../utils/phone');
 
 const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -17,14 +18,6 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
             Math.sin(dLon/2) * Math.sin(dLon/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R * c;
-}
-
-// Normalize a phone number to a leading-'+' E.164-ish form for matching.
-function normalizePhone(phone) {
-  if (!phone) return '';
-  let cleaned = phone.replace(/[^0-9+]/g, '');
-  if (!cleaned.startsWith('+')) cleaned = '+' + cleaned;
-  return cleaned;
 }
 
 async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15) {

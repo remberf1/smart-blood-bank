@@ -3,11 +3,13 @@ const router = express.Router();
 const ResourceRequest = require('../models/ResourceRequest');
 const Inventory = require('../models/Inventory');
 const { auth } = require('../middleware/auth');
-const { allowRoles } = require('../middleware/roles');;
+const { allowRoles } = require('../middleware/roles');
+const { validate } = require('../middleware/validate');
+const { resourceRequestSchema } = require('../validators/schemas');
 // const { sendWhatsAppMessage } = require('../services/whatsappService'); // optional
 
 // Create a request (hospital admin only)
-router.post('/', auth, allowRoles('admin', 'superadmin'), async (req, res) => {
+router.post('/', auth, allowRoles('admin', 'superadmin'), validate(resourceRequestSchema), async (req, res) => {
   try {
     const { supplyingHospitalId, resourceType, bloodGroup, units, notes } = req.body;
     const requestingHospitalId = req.user.hospitalId || req.body.requestingHospitalId;

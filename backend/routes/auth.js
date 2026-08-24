@@ -3,9 +3,11 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { auth, isSuperAdmin } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { loginSchema, registerUserSchema } = require('../validators/schemas');
 
 // ==================== REGISTER (Super Admin only - for creating staff) ====================
-router.post('/register', auth, isSuperAdmin, async (req, res) => {
+router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async (req, res) => {
   try {
     const { name, email, password, role, hospitalId } = req.body;
     
@@ -43,7 +45,7 @@ router.post('/register', auth, isSuperAdmin, async (req, res) => {
 });
 
 // ==================== LOGIN ====================
-router.post('/login', async (req, res) => {
+router.post('/login', validate(loginSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
     

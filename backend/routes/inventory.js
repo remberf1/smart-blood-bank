@@ -1,20 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const Inventory = require('../models/Inventory');
+const BloodBatch = require('../models/BloodBatch');
 const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = require('../controllers/wpsEngine');
 const { auth, isAdmin } = require('../middleware/auth');
-const { canAccessHospital } = require('../middleware/roles');
+const { canAccessHospital, allowRoles } = require('../middleware/roles');
+const { addBloodUnits, removeBloodUnits, refreshBloodInventory, expireDueBatches } = require('../services/inventoryService');
 
 // POST - Add inventory
 router.post('/',auth,async (req, res) => {
   try {
-    console.log('POST /api/inventory called');
     const { hospitalId, resourceType, bloodGroup, units, oxygenCylinderCount, oxygenFillStatus } = req.body;
 
     if (!canAccessHospital(req.user, hospitalId)) {
       return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
     }
 
+    // Blood is tracked as dated batches; adding stock creates a batch with an
+    // expiry and refreshes the Inventory cache.
+    if (resourceType === 'blood') {
+      if (!bloodGroup) return res.status(400).json({ error: 'bloodGroup is required for blood' });
+      await addBloodUnits({ hospitalId, bloodGroup, units: units || 0, source: 'manual' });
+      const inventory = await Inventory.findOne({ hospitalId, resourceType: 'blood', bloodGroup });
+      return res.status(201).json(inventory);
+    }
+
+    // Oxygen is a simple counter (no expiry / batches).
     const inventory = new Inventory({
       hospitalId,
       resourceType,
@@ -23,7 +34,7 @@ router.post('/',auth,async (req, res) => {
       oxygenCylinderCount: oxygenCylinderCount || 0,
       oxygenFillStatus: oxygenFillStatus || 'empty'
     });
-    
+
     await inventory.save();
     res.status(201).json(inventory);
   } catch (err) {
@@ -82,19 +93,32 @@ router.get('/hospital/:hospitalId', async (req, res) => {
   }
 });
 
-// PUT - Update blood units
+// PUT - Set blood units to an absolute value (reconciled through batches)
 router.put('/blood/:inventoryId',auth, async (req, res) => {
   try {
-    const { units } = req.body;
+    const target = Number(req.body.units);
     const existing = await Inventory.findById(req.params.inventoryId);
     if (!existing) return res.status(404).json({ error: 'Inventory not found' });
     if (!canAccessHospital(req.user, existing.hospitalId)) {
       return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
     }
-    existing.units = units;
-    existing.lastUpdatedAt = Date.now();
-    await existing.save();
-    res.json(existing);
+    if (!Number.isFinite(target) || target < 0) {
+      return res.status(400).json({ error: 'units must be a non-negative number' });
+    }
+
+    // Reconcile the requested count against dated batches: add a manual batch
+    // for an increase, discard oldest stock (FEFO) for a decrease.
+    const delta = target - (existing.units || 0);
+    if (delta > 0) {
+      await addBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, units: delta, source: 'manual' });
+    } else if (delta < 0) {
+      await removeBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, units: -delta });
+    } else {
+      await refreshBloodInventory(existing.hospitalId, existing.bloodGroup);
+    }
+
+    const updated = await Inventory.findById(req.params.inventoryId);
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -129,6 +153,43 @@ router.delete('/:inventoryId',auth, async (req, res) => {
     }
     await existing.deleteOne();
     res.json({ message: 'Inventory deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== BLOOD BATCH / EXPIRY ====================
+// GET - Batches expiring soon (own hospital; superadmin may pass ?hospitalId=)
+router.get('/expiring', auth, async (req, res) => {
+  try {
+    const days = Number(req.query.days) || 7;
+    const hospitalId =
+      req.user.role === 'superadmin' ? req.query.hospitalId : req.user.hospitalId;
+
+    if (req.user.role !== 'superadmin' && !hospitalId) {
+      return res.status(400).json({ error: 'No hospital associated with your account' });
+    }
+
+    const now = new Date();
+    const cutoff = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+    const filter = { status: 'available', expiryDate: { $gt: now, $lte: cutoff } };
+    if (hospitalId) filter.hospitalId = hospitalId;
+
+    const batches = await BloodBatch.find(filter)
+      .populate('donorId', 'name bloodGroup')
+      .populate('hospitalId', 'name')
+      .sort({ expiryDate: 1 });
+    res.json(batches);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST - Manually run the expiry sweep (admin/superadmin)
+router.post('/expire-run', auth, allowRoles('admin', 'superadmin'), async (req, res) => {
+  try {
+    const expiredBatches = await expireDueBatches();
+    res.json({ expiredBatches });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -3,36 +3,14 @@ const router = express.Router();
 const QRCode = require("qrcode");
 const jwt = require("jsonwebtoken");
 const Donor = require("../models/Donor");
-const Inventory = require("../models/Inventory");
 const { auth, isAdmin } = require("../middleware/auth");
-
-// Format Nigerian phone numbers to E.164 format (+234...)
-function formatPhoneNumber(phone) {
-  if (!phone) return null;
-
-  // Remove any non-digit characters
-  let cleaned = phone.toString().replace(/\D/g, '');
-
-  // If it starts with '0', remove the leading zero (Nigerian local format)
-  if (cleaned.startsWith('0')) {
-    cleaned = cleaned.substring(1);
-  }
-
-  // If it already has the country code (234) at the start
-  if (cleaned.startsWith('234')) {
-    // Must have exactly 13 digits (234 + 10 digits)
-    if (cleaned.length !== 13) return null;
-    return '+' + cleaned;
-  }
-
-  // Otherwise, assume the country code is missing. Must have 10 digits.
-  if (cleaned.length !== 10) return null;
-
-  return '+' + '234' + cleaned;
-}
+const { formatNigerianPhone } = require("../utils/phone");
+const { addBloodUnits } = require("../services/inventoryService");
+const { validate } = require("../middleware/validate");
+const { donorRegisterSchema } = require("../validators/schemas");
 
 // ==================== REGISTER DONOR ====================
-router.post("/register", async (req, res) => {
+router.post("/register", validate(donorRegisterSchema), async (req, res) => {
   try {
     const {
       name,
@@ -48,7 +26,7 @@ router.post("/register", async (req, res) => {
     } = req.body;
 
     // Format phone number
-    const formattedPhone = formatPhoneNumber(phone);
+    const formattedPhone = formatNigerianPhone(phone);
 
     if (!formattedPhone) {
       return res.status(400).json({
@@ -208,17 +186,20 @@ router.post("/verify", auth, async (req, res) => {
       donor.deferralReason = "90 days waiting period after donation";
       await donor.save();
 
-      // +1 unit to that hospital's blood inventory (create the row if needed).
-      const inventory = await Inventory.findOneAndUpdate(
-        { hospitalId, resourceType: "blood", bloodGroup },
-        { $inc: { units: 1 }, $set: { lastUpdatedAt: Date.now() } },
-        { upsert: true, new: true }
-      );
+      // Record the donation as a dated, traceable batch (donorId + expiry) and
+      // refresh the hospital's blood inventory cache.
+      const units = await addBloodUnits({
+        hospitalId,
+        bloodGroup,
+        units: 1,
+        donorId: donor._id,
+        source: "donation",
+      });
 
       return res.json({
         verified: true,
         donationRecorded: true,
-        inventory: { hospitalId, bloodGroup, units: inventory.units },
+        inventory: { hospitalId, bloodGroup, units },
         donor: {
           name: donor.name,
           bloodGroup: donor.bloodGroup,
@@ -339,7 +320,7 @@ router.put("/:donorId", auth, async (req, res) => {
     };
 
     if (phone) {
-      const formattedPhone = formatPhoneNumber(phone);
+      const formattedPhone = formatNigerianPhone(phone);
       if (!formattedPhone) {
         return res.status(400).json({ error: "Invalid phone number format" });
       }

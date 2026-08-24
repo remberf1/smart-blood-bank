@@ -23,6 +23,13 @@ const patientRequestSchema = new mongoose.Schema({
 
   allocatedBatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'BloodBatch' },
   allocatedHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital' }, // hospital matched to fulfill this request
+  // Which batches (and thus donors) actually fulfilled this request — the
+  // donor -> unit -> patient traceability chain, recorded on delivery.
+  fulfilledBatches: [{
+    batchId: { type: mongoose.Schema.Types.ObjectId, ref: 'BloodBatch' },
+    donorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Donor' },
+    units: { type: Number },
+  }],
   notes: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }

@@ -1,19 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const PatientRequest = require("../models/PatientRequest");
-const Inventory = require("../models/Inventory");
 const { allocateBlood } = require("../services/allocationService");
+const { consumeBloodFEFO } = require("../services/inventoryService");
 const { auth } = require("../middleware/auth");
 const { allowRoles, canAccessHospital } = require("../middleware/roles");
+const { validate } = require("../middleware/validate");
+const { patientRequestSchema } = require("../validators/schemas");
 
 // ------------------- Public (no authentication) -------------------
 // Create a new request (supports advance scheduling)
-router.post("/", async (req, res) => {
+router.post("/", validate(patientRequestSchema), async (req, res) => {
   try {
     const { resourceType, bloodGroup, scheduledTime, ...rest } = req.body;
-    if (resourceType === "blood" && !bloodGroup) {
-      return res.status(400).json({ error: "Blood group required for blood requests" });
-    }
 
     const request = new PatientRequest({
       resourceType,
@@ -57,6 +56,33 @@ router.get("/hospital/:hospitalId", auth, async (req, res) => {
   }
 });
 
+// Traceability: which batches/donors fulfilled a request (own hospital or superadmin)
+router.get("/:id/trace", auth, async (req, res) => {
+  try {
+    const request = await PatientRequest.findById(req.params.id)
+      .populate("fulfilledBatches.donorId", "name bloodGroup phone")
+      .populate("fulfilledBatches.batchId", "collectionDate expiryDate source");
+    if (!request) return res.status(404).json({ error: "Request not found" });
+
+    const scopeHospitalId = request.allocatedHospitalId || request.preferredHospitalId;
+    if (!canAccessHospital(req.user, scopeHospitalId)) {
+      return res.status(403).json({ error: "You can only trace your own hospital's requests" });
+    }
+
+    res.json({
+      requestId: request._id,
+      patientName: request.patientName,
+      bloodGroup: request.bloodGroup,
+      units: request.units,
+      deliveryStatus: request.deliveryStatus,
+      deliveredAt: request.deliveredAt,
+      fulfilledBatches: request.fulfilledBatches,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update delivery status (approved, in-transit, delivered, cancelled)
 router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, res) => {
   try {
@@ -71,29 +97,25 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
       return res.status(403).json({ error: "You can only update your own hospital's requests" });
     }
 
-    // Deduct stock exactly once, on the transition into 'delivered'.
-    // Atomic guarded decrement prevents negative stock and races.
+    // Consume stock exactly once, on the transition into 'delivered', drawing
+    // FEFO from dated batches and recording which batches/donors fulfilled it.
     if (
       deliveryStatus === "delivered" &&
       request.deliveryStatus !== "delivered" &&
       request.resourceType === "blood" &&
       request.allocatedHospitalId
     ) {
-      const deducted = await Inventory.findOneAndUpdate(
-        {
-          hospitalId: request.allocatedHospitalId,
-          resourceType: "blood",
-          bloodGroup: request.bloodGroup,
-          units: { $gte: request.units },
-        },
-        { $inc: { units: -request.units }, $set: { lastUpdatedAt: Date.now() } },
-        { new: true }
-      );
-      if (!deducted) {
+      const result = await consumeBloodFEFO({
+        hospitalId: request.allocatedHospitalId,
+        bloodGroup: request.bloodGroup,
+        units: request.units,
+      });
+      if (!result.ok) {
         return res.status(409).json({
-          error: "Allocated hospital no longer has enough stock to fulfill this request",
+          error: `Allocated hospital no longer has enough non-expired stock (short ${result.shortfall} unit(s))`,
         });
       }
+      request.fulfilledBatches = result.fulfilledBatches;
     }
 
     request.deliveryStatus = deliveryStatus;
