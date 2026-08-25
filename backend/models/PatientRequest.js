@@ -28,6 +28,7 @@ const patientRequestSchema = new mongoose.Schema({
   fulfilledBatches: [{
     batchId: { type: mongoose.Schema.Types.ObjectId, ref: 'BloodBatch' },
     donorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Donor' },
+    bloodGroup: { type: String }, // actual donor group used (may differ from request when compatible)
     units: { type: Number },
   }],
   notes: { type: String },

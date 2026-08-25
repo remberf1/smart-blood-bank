@@ -3,6 +3,7 @@ const router = express.Router();
 const PatientRequest = require("../models/PatientRequest");
 const { allocateBlood } = require("../services/allocationService");
 const { consumeBloodFEFO } = require("../services/inventoryService");
+const { notifyRequestStatus } = require("../services/notificationService");
 const { auth } = require("../middleware/auth");
 const { allowRoles, canAccessHospital } = require("../middleware/roles");
 const { validate } = require("../middleware/validate");
@@ -90,6 +91,7 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
 
     const request = await PatientRequest.findById(req.params.id);
     if (!request) return res.status(404).json({ error: "Request not found" });
+    const previousStatus = request.deliveryStatus;
 
     // Only the fulfilling/preferred hospital (or superadmin) may drive status.
     const scopeHospitalId = request.allocatedHospitalId || request.preferredHospitalId;
@@ -125,6 +127,12 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
     if (deliveryStatus === "delivered") request.deliveredAt = Date.now();
 
     await request.save();
+
+    // Best-effort: notify the patient when the status actually changed.
+    if (deliveryStatus !== previousStatus) {
+      notifyRequestStatus(request).catch(() => {});
+    }
+
     res.json(request);
   } catch (err) {
     res.status(500).json({ error: err.message });

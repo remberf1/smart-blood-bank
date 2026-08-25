@@ -4,8 +4,11 @@ const QRCode = require("qrcode");
 const jwt = require("jsonwebtoken");
 const Donor = require("../models/Donor");
 const { auth, isAdmin } = require("../middleware/auth");
+const { allowRoles } = require("../middleware/roles");
 const { formatNigerianPhone } = require("../utils/phone");
+const { evaluateDonorEligibility } = require("../utils/eligibility");
 const { addBloodUnits } = require("../services/inventoryService");
+const { refreshDonorEligibility } = require("../services/eligibilityService");
 const { validate } = require("../middleware/validate");
 const { donorRegisterSchema } = require("../validators/schemas");
 
@@ -43,37 +46,9 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
         .json({ error: "Donor with this phone number already exists" });
     }
 
-    // Calculate eligibility based on basic rules
-    let eligibilityStatus = "eligible";
-    let deferralReason = null;
-
-    // Rule 1: Age check (18-65 years)
-    const age = new Date().getFullYear() - new Date(dateOfBirth).getFullYear();
-    if (age < 18 || age > 65) {
-      eligibilityStatus = "deferred";
-      deferralReason = "Age must be between 18 and 65 years";
-    }
-
-    // Rule 2: Weight check (minimum 50kg)
-    if (weight && weight < 50) {
-      eligibilityStatus = "deferred";
-      deferralReason = deferralReason
-        ? `${deferralReason}, Weight must be at least 50kg`
-        : "Weight must be at least 50kg";
-    }
-
-    // Rule 3: Last donation date (at least 90 days ago)
-    if (lastDonationDate) {
-      const daysSinceLastDonation =
-        (Date.now() - new Date(lastDonationDate).getTime()) /
-        (1000 * 60 * 60 * 24);
-      if (daysSinceLastDonation < 90) {
-        eligibilityStatus = "deferred";
-        deferralReason = deferralReason
-          ? `${deferralReason}, Must wait 90 days between donations`
-          : "Must wait 90 days between donations";
-      }
-    }
+    // Calculate eligibility using the shared rules (accurate age, weight, wait).
+    const { status: eligibilityStatus, reason: deferralReason } =
+      evaluateDonorEligibility({ dateOfBirth, weight, lastDonationDate });
 
     // Create donor with formatted phone
     const donor = new Donor({
@@ -131,6 +106,18 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     });
   } catch (err) {
     console.error("Error registering donor:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== REFRESH ELIGIBILITY (admin/superadmin) ====================
+// Restore donors whose post-donation 90-day wait has elapsed. Also runs on a
+// daily schedule; this endpoint lets staff trigger it on demand.
+router.post("/refresh-eligibility", auth, allowRoles("admin", "superadmin"), async (req, res) => {
+  try {
+    const restored = await refreshDonorEligibility();
+    res.json({ restored });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

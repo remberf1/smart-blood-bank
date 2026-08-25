@@ -31,17 +31,35 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const { expireDueBatches } = require('./services/inventoryService');
+const { refreshDonorEligibility } = require('./services/eligibilityService');
+const { sendDueAppointmentReminders } = require('./services/notificationService');
 
-// Connect to MongoDB, then run (and schedule) the blood-expiry sweep.
+// Connect to MongoDB, then run (and schedule) the background jobs.
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('MongoDB connected');
+
     const runSweep = () =>
       expireDueBatches()
         .then((n) => n && console.log(`Expired ${n} blood batch(es)`))
         .catch((err) => console.error('Expiry sweep error:', err.message));
-    runSweep(); // once on startup
-    setInterval(runSweep, 60 * 60 * 1000).unref(); // hourly
+
+    const runEligibility = () =>
+      refreshDonorEligibility()
+        .then((n) => n && console.log(`Restored ${n} donor(s) to eligible`))
+        .catch((err) => console.error('Eligibility refresh error:', err.message));
+
+    const runReminders = () =>
+      sendDueAppointmentReminders()
+        .then((n) => n && console.log(`Sent ${n} appointment reminder(s)`))
+        .catch((err) => console.error('Appointment reminder error:', err.message));
+
+    runSweep();        // once on startup
+    runEligibility();  // once on startup
+    runReminders();    // once on startup
+    setInterval(runSweep, 60 * 60 * 1000).unref();            // hourly
+    setInterval(runEligibility, 24 * 60 * 60 * 1000).unref(); // daily
+    setInterval(runReminders, 6 * 60 * 60 * 1000).unref();    // every 6h
   })
   .catch(err => console.error('MongoDB connection error:', err));
 
@@ -73,6 +91,7 @@ const donorAuthRoutes = require('./routes/donorAuth');
 const donorAppointmentRoutes = require('./routes/donorAppointments');
 const resourceRequestRoutes = require('./routes/resourceRequests');
 const sosRoutes = require('./routes/sos');
+const analyticsRoutes = require('./routes/analytics');
 
 // Mount routes
 app.use('/api/inventory', inventoryRoutes);
@@ -85,6 +104,7 @@ app.use('/api/donor/auth', authLimiter, donorAuthRoutes);
 app.use('/api/donor/appointments', donorAppointmentRoutes);
 app.use('/api/resource-requests', resourceRequestRoutes);
 app.use('/api/sos', sosRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Simple health check
 app.get('/', (req, res) => {

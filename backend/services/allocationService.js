@@ -1,5 +1,7 @@
 const Inventory = require('../models/Inventory');
 const PatientRequest = require('../models/PatientRequest');
+const { getCompatibleDonors } = require('../utils/bloodCompatibility');
+const { notifyRequestStatus } = require('./notificationService');
 
 // Lower number = higher priority
 const URGENCY_PRIORITY = { emergency: 0, scheduled: 1, routine: 2 };
@@ -32,19 +34,28 @@ async function allocateBlood() {
   for (const request of pending) {
     if (!request.bloodGroup) continue;
 
-    // Find inventory that can fully cover this request.
-    const query = {
+    // A hospital can cover the request if its TOTAL compatible stock (across
+    // all donor groups the patient can receive) meets the requested units.
+    const compatibleGroups = getCompatibleDonors(request.bloodGroup);
+    if (compatibleGroups.length === 0) continue;
+
+    const match = {
       resourceType: 'blood',
-      bloodGroup: request.bloodGroup,
-      units: { $gte: request.units },
+      bloodGroup: { $in: compatibleGroups },
+      units: { $gt: 0 },
     };
     // Honor the patient's preferred hospital when specified.
-    if (request.preferredHospitalId) query.hospitalId = request.preferredHospitalId;
+    if (request.preferredHospitalId) match.hospitalId = request.preferredHospitalId;
 
-    // Prefer the hospital best able to spare units (highest stock).
-    const inventory = await Inventory.findOne(query).sort({ units: -1 });
+    const candidates = await Inventory.aggregate([
+      { $match: match },
+      { $group: { _id: '$hospitalId', total: { $sum: '$units' } } },
+      { $match: { total: { $gte: request.units } } },
+      { $sort: { total: -1 } }, // prefer the hospital best able to spare units
+      { $limit: 1 },
+    ]);
 
-    if (!inventory) {
+    if (candidates.length === 0) {
       // No hospital can cover it right now — leave it pending for a later pass.
       console.log(`No stock to match request ${request._id} (${request.bloodGroup} x${request.units})`);
       continue;
@@ -52,10 +63,12 @@ async function allocateBlood() {
 
     request.deliveryStatus = 'approved';
     request.approvedAt = new Date();
-    request.allocatedHospitalId = inventory.hospitalId;
+    request.allocatedHospitalId = candidates[0]._id;
     request.updatedAt = new Date();
     await request.save();
-    // TODO: notify patient/hospital (WhatsApp) once messaging is wired in.
+
+    // Best-effort: let the patient know their request was matched.
+    notifyRequestStatus(request).catch(() => {});
   }
 }
 

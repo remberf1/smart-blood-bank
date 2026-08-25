@@ -12,6 +12,7 @@ import {
   LogOut,
   Menu,
   ArrowRightLeft,
+  BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -22,6 +23,7 @@ const navItems = [
   { name: 'Donors', href: '/dashboard/donors', icon: Users },
   { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2 },
    { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft },
+  { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

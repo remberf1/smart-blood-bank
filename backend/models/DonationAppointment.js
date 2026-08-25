@@ -10,6 +10,7 @@ const donationAppointmentSchema = new mongoose.Schema({
     default: 'scheduled',
   },
   notes: { type: String },
+  reminderSent: { type: Boolean, default: false }, // set once a reminder WhatsApp goes out
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

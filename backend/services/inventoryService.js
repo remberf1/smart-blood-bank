@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const BloodBatch = require('../models/BloodBatch');
 const Inventory = require('../models/Inventory');
+const { getCompatibleDonors } = require('../utils/bloodCompatibility');
 
 // Red-cell shelf life. Kept here so it's easy to change / make configurable.
 const SHELF_LIFE_DAYS = 42;
@@ -29,6 +30,53 @@ function selectFEFO(batches, unitsNeeded) {
     if (b.units <= 0) continue;
     const take = Math.min(b.units, remaining);
     allocations.push({ batchId: b._id, donorId: b.donorId || null, units: take });
+    remaining -= take;
+  }
+  return {
+    allocations,
+    allocated: unitsNeeded - Math.max(0, remaining),
+    shortfall: Math.max(0, remaining),
+  };
+}
+
+/**
+ * Comparator that orders batches by donor-group preference (index in the
+ * `preference` list), then by soonest expiry (FEFO) within a group.
+ */
+function batchPreferenceComparator(preference) {
+  const rank = {};
+  preference.forEach((g, i) => { rank[g] = i; });
+  return (a, b) => {
+    const ra = rank[a.bloodGroup] ?? Number.MAX_SAFE_INTEGER;
+    const rb = rank[b.bloodGroup] ?? Number.MAX_SAFE_INTEGER;
+    return ra - rb || new Date(a.expiryDate) - new Date(b.expiryDate);
+  };
+}
+
+/**
+ * Pure compatibility-aware selection. Given available batches (each with
+ * bloodGroup/units/expiryDate/donorId), units needed, and a preference-ordered
+ * list of acceptable donor groups, pick which batches to draw. Exact/preferred
+ * groups are consumed before universal ones; FEFO within each group.
+ * @returns {{ allocations, allocated, shortfall }}
+ */
+function selectCompatible(batches, unitsNeeded, preference) {
+  const acceptable = new Set(preference);
+  const sorted = batches
+    .filter((b) => b.units > 0 && acceptable.has(b.bloodGroup))
+    .sort(batchPreferenceComparator(preference));
+
+  const allocations = [];
+  let remaining = unitsNeeded;
+  for (const b of sorted) {
+    if (remaining <= 0) break;
+    const take = Math.min(b.units, remaining);
+    allocations.push({
+      batchId: b._id,
+      donorId: b.donorId || null,
+      bloodGroup: b.bloodGroup,
+      units: take,
+    });
     remaining -= take;
   }
   return {
@@ -110,34 +158,47 @@ async function removeBloodUnits({ hospitalId, bloodGroup, units }) {
 }
 
 /**
- * Consume units for a patient (FEFO), marking depleted batches allocated and
- * returning the fulfilled batch/donor breakdown for traceability. Fails
- * (ok:false) without consuming anything if there isn't enough non-expired stock.
+ * Consume units for a patient needing `bloodGroup`, drawing from all
+ * compatible donor groups (exact/same-ABO first, universal last), FEFO within
+ * each. Marks depleted batches allocated and returns the fulfilled
+ * batch/donor/group breakdown for traceability. Fails (ok:false) without
+ * consuming anything if compatible non-expired stock is insufficient.
  */
 async function consumeBloodFEFO({ hospitalId, bloodGroup, units }) {
   const now = new Date();
+  const preference = getCompatibleDonors(bloodGroup);
+  if (preference.length === 0) return { ok: false, shortfall: units };
+
   const batches = await BloodBatch.find({
     hospitalId,
-    bloodGroup,
+    bloodGroup: { $in: preference },
     status: 'available',
     expiryDate: { $gt: now },
-  }).sort({ expiryDate: 1 });
+  });
 
-  const total = batches.reduce((s, b) => s + b.units, 0);
-  if (total < units) return { ok: false, shortfall: units - total };
+  const plan = selectCompatible(batches, units, preference);
+  if (plan.shortfall > 0) return { ok: false, shortfall: plan.shortfall };
 
-  let remaining = units;
+  const byId = new Map(batches.map((b) => [b._id.toString(), b]));
+  const touchedGroups = new Set();
   const fulfilledBatches = [];
-  for (const b of batches) {
-    if (remaining <= 0) break;
-    const take = Math.min(b.units, remaining);
-    b.units -= take;
-    remaining -= take;
+  for (const a of plan.allocations) {
+    const b = byId.get(a.batchId.toString());
+    b.units -= a.units;
     if (b.units === 0) b.status = 'allocated';
     await b.save();
-    fulfilledBatches.push({ batchId: b._id, donorId: b.donorId || null, units: take });
+    touchedGroups.add(b.bloodGroup);
+    fulfilledBatches.push({
+      batchId: b._id,
+      donorId: b.donorId || null,
+      bloodGroup: b.bloodGroup,
+      units: a.units,
+    });
   }
-  await refreshBloodInventory(hospitalId, bloodGroup);
+
+  for (const g of touchedGroups) {
+    await refreshBloodInventory(hospitalId, g);
+  }
   return { ok: true, fulfilledBatches };
 }
 
@@ -161,6 +222,7 @@ async function expireDueBatches() {
 module.exports = {
   SHELF_LIFE_DAYS,
   selectFEFO,
+  selectCompatible,
   refreshBloodInventory,
   addBloodUnits,
   removeBloodUnits,
