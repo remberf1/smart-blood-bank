@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { auth, isSuperAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { loginSchema, registerUserSchema } = require('../validators/schemas');
+const { loginSchema, registerUserSchema, updateUserSchema } = require('../validators/schemas');
 
 // ==================== REGISTER (Super Admin only - for creating staff) ====================
 router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async (req, res) => {
@@ -137,6 +137,37 @@ router.get('/users', auth, async (req, res) => {
     
     const users = await User.find().select('-password').populate('hospitalId', 'name');
     res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== UPDATE USER (Super Admin only) ====================
+// Assign/change a user's hospital, role, or active status.
+router.put('/users/:id', auth, isSuperAdmin, validate(updateUserSchema), async (req, res) => {
+  try {
+    const { role, hospitalId, isActive } = req.body;
+
+    // Guard against self-lockout: a superadmin can't demote or deactivate itself.
+    if (req.params.id === req.user.userId) {
+      if (role !== undefined && role !== req.user.role) {
+        return res.status(400).json({ error: 'You cannot change your own role' });
+      }
+      if (isActive === false) {
+        return res.status(400).json({ error: 'You cannot deactivate your own account' });
+      }
+    }
+
+    const update = {};
+    if (role !== undefined) update.role = role;
+    if (hospitalId !== undefined) update.hospitalId = hospitalId || null;
+    if (isActive !== undefined) update.isActive = isActive;
+
+    const user = await User.findByIdAndUpdate(req.params.id, update, { new: true })
+      .select('-password')
+      .populate('hospitalId', 'name');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

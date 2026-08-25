@@ -143,8 +143,8 @@ router.put('/oxygen/:inventoryId',auth, async (req, res) => {
   }
 });
 
-// DELETE - Remove inventory
-router.delete('/:inventoryId',auth, async (req, res) => {
+// DELETE - Remove inventory (admin/superadmin only; staff can add/update, not delete)
+router.delete('/:inventoryId', auth, isAdmin, async (req, res) => {
   try {
     const existing = await Inventory.findById(req.params.inventoryId);
     if (!existing) return res.status(404).json({ error: 'Inventory not found' });

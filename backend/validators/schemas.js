@@ -18,6 +18,12 @@ const registerUserSchema = z.object({
   hospitalId: objectId.optional(),
 });
 
+const updateUserSchema = z.object({
+  role: z.enum(['admin', 'superadmin', 'staff']).optional(),
+  hospitalId: objectId.or(z.literal('')).nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
 const donorRegisterSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   phone: z.string().min(1, 'Phone is required'),
@@ -63,6 +69,7 @@ const resourceRequestSchema = z.object({
 module.exports = {
   loginSchema,
   registerUserSchema,
+  updateUserSchema,
   donorRegisterSchema,
   patientRequestSchema,
   resourceRequestSchema,

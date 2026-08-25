@@ -13,6 +13,7 @@ import {
   Menu,
   ArrowRightLeft,
   BarChart3,
+  UserCog,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -24,6 +25,7 @@ const navItems = [
   { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2 },
    { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+  { name: 'Users', href: '/dashboard/users', icon: UserCog, superadminOnly: true },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -91,7 +93,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Navigation */}
           <nav className="flex-1 p-4 space-y-1">
-            {navItems.map((item) => {
+            {navItems
+              .filter((item) => !(item as any).superadminOnly || user.role === 'superadmin')
+              .map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
               return (

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import apiClient from "../../api/client";
+import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -78,6 +79,7 @@ export default function ResourceRequestsPage() {
     notes: "",
   });
   const router = useRouter();
+  const { user } = useAuth();
 
   // Fetch all data
  const fetchData = async () => {
@@ -210,11 +212,12 @@ export default function ResourceRequestsPage() {
 
   if (loading) return <div className="p-8 text-center">Loading...</div>;
 
-  // Filter suppliers based on current selection
+  // Filter suppliers based on current selection, excluding your own hospital
+  // (you request from OTHER hospitals, not yourself).
   const availableSuppliers = getAvailableSuppliers();
   const uniqueSuppliers = Array.from(
     new Map(availableSuppliers.map((h) => [h._id, h])).values(),
-  );
+  ).filter((h) => h._id !== user?.hospitalId);
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -248,6 +251,7 @@ export default function ResourceRequestsPage() {
                   <TableHead>Resource</TableHead>
                   <TableHead>Units</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Notes</TableHead>
                   <TableHead>Requested</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -270,6 +274,13 @@ export default function ResourceRequestsPage() {
                     </TableCell>
                     <TableCell>{req.units}</TableCell>
                     <TableCell>{getStatusBadge(req.status)}</TableCell>
+                    <TableCell className="max-w-[220px]">
+                      {req.notes ? (
+                        <span className="text-sm text-gray-700 whitespace-pre-wrap break-words">{req.notes}</span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {new Date(req.requestedAt).toLocaleString()}
                     </TableCell>
@@ -315,6 +326,7 @@ export default function ResourceRequestsPage() {
                   <TableHead>Resource</TableHead>
                   <TableHead>Units</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Notes</TableHead>
                   <TableHead>Requested</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -337,6 +349,13 @@ export default function ResourceRequestsPage() {
                     </TableCell>
                     <TableCell>{req.units}</TableCell>
                     <TableCell>{getStatusBadge(req.status)}</TableCell>
+                    <TableCell className="max-w-[220px]">
+                      {req.notes ? (
+                        <span className="text-sm text-gray-700 whitespace-pre-wrap break-words">{req.notes}</span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {new Date(req.requestedAt).toLocaleString()}
                     </TableCell>
@@ -426,6 +445,7 @@ export default function ResourceRequestsPage() {
                   onValueChange={(val) =>
                     setFormData({ ...formData, supplyingHospitalId: val ?? "" })
                   }
+                  items={uniqueSuppliers.map((h) => ({ label: h.name, value: h._id }))}
                   disabled={
                     formData.resourceType === "blood" && !formData.bloodGroup
                   }

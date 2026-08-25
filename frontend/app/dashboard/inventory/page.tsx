@@ -31,6 +31,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Trash2, Droplet, Wind } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
 
 interface Hospital {
   _id: string;
@@ -58,6 +59,10 @@ interface OxygenInventoryItem {
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 export default function InventoryPage() {
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === "superadmin";
+  const ownHospitalId = user?.hospitalId || "";
+
   // Blood state
   const [bloodInventory, setBloodInventory] = useState<BloodInventoryItem[]>(
     [],
@@ -211,13 +216,14 @@ export default function InventoryPage() {
 
   const resetBloodForm = () => {
     setEditingBlood(null);
-    setBloodForm({ hospitalId: "", bloodGroup: "O+", units: 0 });
+    // Non-superadmins can only add to their own hospital; default it in.
+    setBloodForm({ hospitalId: isSuperadmin ? "" : ownHospitalId, bloodGroup: "O+", units: 0 });
   };
 
   const resetOxygenForm = () => {
     setEditingOxygen(null);
     setOxygenForm({
-      hospitalId: "",
+      hospitalId: isSuperadmin ? "" : ownHospitalId,
       oxygenCylinderCount: 0,
       oxygenFillStatus: "empty",
     });
@@ -561,8 +567,8 @@ export default function InventoryPage() {
                   onChange={(e) =>
                     setBloodForm({ ...bloodForm, hospitalId: e.target.value })
                   }
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  disabled={!!editingBlood}
+                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-100 disabled:text-gray-600"
+                  disabled={!!editingBlood || !isSuperadmin}
                   required
                 >
                   <option value="">Select hospital</option>
@@ -572,6 +578,11 @@ export default function InventoryPage() {
                     </option>
                   ))}
                 </select>
+                {!isSuperadmin && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    You can only add stock to your own hospital.
+                  </p>
+                )}
               </div>
               <div>
                 <Label>Blood Group</Label>
@@ -635,8 +646,8 @@ export default function InventoryPage() {
                   onChange={(e) =>
                     setOxygenForm({ ...oxygenForm, hospitalId: e.target.value })
                   }
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  disabled={!!editingOxygen}
+                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-100 disabled:text-gray-600"
+                  disabled={!!editingOxygen || !isSuperadmin}
                   required
                 >
                   <option value="">Select hospital</option>
@@ -646,6 +657,11 @@ export default function InventoryPage() {
                     </option>
                   ))}
                 </select>
+                {!isSuperadmin && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    You can only add stock to your own hospital.
+                  </p>
+                )}
               </div>
               <div>
                 <Label>Cylinder Count</Label>
