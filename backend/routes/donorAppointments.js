@@ -31,7 +31,7 @@ router.post('/', authDonor, async (req, res) => {
     res.status(201).json(appointment);
   } catch (err) {
     console.error('Error creating appointment:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -44,7 +44,7 @@ router.get('/', authDonor, async (req, res) => {
     res.json(appointments);
   } catch (err) {
     console.error('Error fetching appointments:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -58,15 +58,15 @@ router.delete('/:id', authDonor, async (req, res) => {
     if (!appointment) {
       return res.status(404).json({ error: 'Appointment not found' });
     }
-    if (appointment.status !== 'scheduled') {
-      return res.status(400).json({ error: 'Only scheduled appointments can be cancelled' });
+    if (!['pending', 'scheduled'].includes(appointment.status)) {
+      return res.status(400).json({ error: 'Only pending or confirmed appointments can be cancelled' });
     }
     appointment.status = 'cancelled';
     await appointment.save();
     res.json({ message: 'Appointment cancelled', appointment });
   } catch (err) {
     console.error('Error cancelling appointment:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

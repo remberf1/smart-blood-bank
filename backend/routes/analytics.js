@@ -19,7 +19,7 @@ router.get('/summary', auth, async (req, res) => {
   try {
     res.json(await analytics.summary(resolveScope(req)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -27,7 +27,7 @@ router.get('/stock-by-group', auth, async (req, res) => {
   try {
     res.json(await analytics.stockByGroup(resolveScope(req)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -35,7 +35,7 @@ router.get('/donations', auth, async (req, res) => {
   try {
     res.json(await analytics.donationStats(resolveScope(req), clampDays(req.query.days)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -43,7 +43,7 @@ router.get('/requests', auth, async (req, res) => {
   try {
     res.json(await analytics.requestStats(resolveScope(req), clampDays(req.query.days)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -51,7 +51,7 @@ router.get('/wastage', auth, async (req, res) => {
   try {
     res.json(await analytics.wastageStats(resolveScope(req), clampDays(req.query.days)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

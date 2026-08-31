@@ -52,34 +52,29 @@ interface Donor {
   createdAt: string;
 }
 
+const PAGE_SIZE = 20;
+
 export default function DonorsPage() {
   const [donors, setDonors] = useState<Donor[]>([]);
-  const [filteredDonors, setFilteredDonors] = useState<Donor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [stats, setStats] = useState({ total: 0, eligible: 0, deferred: 0, bloodGroups: 0 });
   const [selectedDonor, setSelectedDonor] = useState<Donor | null>(null);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchDonors();
-  }, []);
-
-  useEffect(() => {
-    const filtered = donors.filter(donor =>
-      donor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      donor.phone.includes(searchTerm) ||
-      donor.bloodGroup.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-    setFilteredDonors(filtered);
-  }, [searchTerm, donors]);
-
-  const fetchDonors = async () => {
+  const fetchDonors = async (pageArg: number, search: string) => {
     setLoading(true);
     try {
-      const response = await apiClient.get('/donors');
-      setDonors(response.data);
-      setFilteredDonors(response.data);
+      const response = await apiClient.get('/donors', {
+        params: { page: pageArg, limit: PAGE_SIZE, search: search || undefined },
+      });
+      setDonors(response.data.data);
+      setTotalPages(response.data.totalPages);
+      setStats(response.data.stats);
     } catch (error) {
       console.error('Error fetching donors:', error);
       toast.error('Failed to load donors');
@@ -87,6 +82,21 @@ export default function DonorsPage() {
       setLoading(false);
     }
   };
+
+  // Debounce the search box and reset to the first page on a new term.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  // Fetch whenever the page or the (debounced) search changes.
+  useEffect(() => {
+    fetchDonors(page, debouncedSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedSearch]);
 
   const fetchQrCode = async (donorId: string) => {
     try {
@@ -126,13 +136,6 @@ export default function DonorsPage() {
       return { text: `${daysSince} days ago`, icon: AlertCircle, color: 'text-yellow-600' };
     }
     return { text: `${daysSince} days ago`, icon: CheckCircle, color: 'text-green-600' };
-  };
-
-  const stats = {
-    total: donors.length,
-    eligible: donors.filter(d => d.eligibilityStatus === 'eligible').length,
-    deferred: donors.filter(d => d.eligibilityStatus === 'deferred').length,
-    bloodGroups: [...new Set(donors.map(d => d.bloodGroup))].length,
   };
 
   return (
@@ -230,7 +233,7 @@ export default function DonorsPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ) : filteredDonors.length === 0 ? (
+                ) : donors.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-gray-500">
                       <Users className="h-8 w-8 mx-auto mb-2 text-gray-300" />
@@ -238,7 +241,7 @@ export default function DonorsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredDonors.map((donor) => {
+                  donors.map((donor) => {
                     const lastDonation = getLastDonationStatus(donor.lastDonationDate);
                     const LastDonationIcon = lastDonation.icon;
                     return (
@@ -301,6 +304,33 @@ export default function DonorsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Pagination */}
+      {stats.total > 0 && (
+        <div className="flex items-center justify-between mt-4">
+          <p className="text-sm text-gray-500">
+            Page {page} of {totalPages} · {stats.total} donor{stats.total === 1 ? '' : 's'}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.max(p - 1, 1))}
+              disabled={page <= 1 || loading}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
+              disabled={page >= totalPages || loading}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* QR Code Dialog */}
       <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>

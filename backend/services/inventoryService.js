@@ -202,6 +202,113 @@ async function consumeBloodFEFO({ hospitalId, bloodGroup, units }) {
   return { ok: true, fulfilledBatches };
 }
 
+function isTransactionUnsupported(err) {
+  return (
+    !!err &&
+    (err.code === 20 ||
+      /Transaction numbers are only allowed on a replica set|replica set|Transactions are not supported/i.test(
+        err.message || ''
+      ))
+  );
+}
+
+/**
+ * Atomically fulfill a delivered blood request: consume compatible batches
+ * (FEFO) AND mark the request delivered + record fulfilledBatches in ONE
+ * transaction — so stock cannot be oversold under concurrency, and a retry
+ * after a mid-way failure cannot double-consume (the delivered flag and the
+ * batch decrements commit together or not at all).
+ *
+ * Falls back to a best-effort non-transactional path only when transactions
+ * are unavailable (e.g. a standalone mongod in local dev).
+ *
+ * @param request a PatientRequest mongoose document (mutated + saved on success)
+ * @returns {Promise<{ok:true, fulfilledBatches}|{ok:false, shortfall:number}>}
+ */
+async function consumeForDelivery(request) {
+  const preference = getCompatibleDonors(request.bloodGroup);
+  if (preference.length === 0) return { ok: false, shortfall: request.units };
+
+  try {
+    return await consumeForDeliveryTxn(request, preference);
+  } catch (err) {
+    if (isTransactionUnsupported(err)) {
+      console.warn(
+        'MongoDB transactions unavailable; using non-transactional delivery (possible oversell under heavy concurrency).'
+      );
+      return consumeForDeliveryFallback(request);
+    }
+    throw err;
+  }
+}
+
+async function consumeForDeliveryTxn(request, preference) {
+  const session = await mongoose.startSession();
+  let outcome = null;
+  const touched = new Set();
+  try {
+    await session.withTransaction(async () => {
+      // withTransaction may re-run this callback on transient conflicts, so
+      // reset per-attempt state and re-read the batches inside the session.
+      outcome = null;
+      touched.clear();
+      const now = new Date();
+      const batches = await BloodBatch.find({
+        hospitalId: request.allocatedHospitalId,
+        bloodGroup: { $in: preference },
+        status: 'available',
+        expiryDate: { $gt: now },
+      }).session(session);
+
+      const plan = selectCompatible(batches, request.units, preference);
+      if (plan.shortfall > 0) {
+        outcome = { ok: false, shortfall: plan.shortfall };
+        return; // nothing written — empty commit
+      }
+
+      const byId = new Map(batches.map((b) => [b._id.toString(), b]));
+      const fulfilled = [];
+      for (const a of plan.allocations) {
+        const b = byId.get(a.batchId.toString());
+        b.units -= a.units;
+        if (b.units === 0) b.status = 'allocated';
+        await b.save({ session });
+        touched.add(b.bloodGroup);
+        fulfilled.push({ batchId: b._id, donorId: b.donorId || null, bloodGroup: b.bloodGroup, units: a.units });
+      }
+
+      request.fulfilledBatches = fulfilled;
+      request.deliveryStatus = 'delivered';
+      request.deliveredAt = new Date();
+      request.updatedAt = new Date();
+      await request.save({ session });
+      outcome = { ok: true, fulfilledBatches: fulfilled };
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  if (outcome && outcome.ok) {
+    for (const g of touched) await refreshBloodInventory(request.allocatedHospitalId, g);
+  }
+  return outcome;
+}
+
+async function consumeForDeliveryFallback(request) {
+  const res = await consumeBloodFEFO({
+    hospitalId: request.allocatedHospitalId,
+    bloodGroup: request.bloodGroup,
+    units: request.units,
+  });
+  if (!res.ok) return res;
+  request.fulfilledBatches = res.fulfilledBatches;
+  request.deliveryStatus = 'delivered';
+  request.deliveredAt = new Date();
+  request.updatedAt = new Date();
+  await request.save();
+  return { ok: true, fulfilledBatches: res.fulfilledBatches };
+}
+
 /** Mark all due batches expired and refresh affected caches. Returns count. */
 async function expireDueBatches() {
   const now = new Date();
@@ -223,6 +330,7 @@ module.exports = {
   SHELF_LIFE_DAYS,
   selectFEFO,
   selectCompatible,
+  consumeForDelivery,
   refreshBloodInventory,
   addBloodUnits,
   removeBloodUnits,

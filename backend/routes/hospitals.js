@@ -21,7 +21,7 @@ router.post('/', auth, isSuperAdmin, async (req, res) => {
     res.status(201).json(hospital);
   } catch (err) {
     console.error('Error creating hospital:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -31,7 +31,7 @@ router.get('/', async (req, res) => {
     const hospitals = await Hospital.find().sort({ name: 1 });
     res.json(hospitals);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -44,7 +44,7 @@ router.get('/:id', async (req, res) => {
     }
     res.json(hospital);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -69,7 +69,7 @@ router.put('/:id', auth, async (req, res) => {
     res.json({ message: 'Hospital updated successfully', hospital });
   } catch (err) {
     console.error('Error updating hospital:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -93,7 +93,7 @@ router.delete('/:id', auth, isSuperAdmin, async (req, res) => {
     res.json({ message: 'Hospital deleted successfully', hospital: { name: hospital.name } });
   } catch (err) {
     console.error('Error deleting hospital:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -117,7 +117,7 @@ router.get('/:id/inventory', async (req, res) => {
       inventory
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -131,7 +131,7 @@ router.put('/:id/delivery-status', auth, async (req, res) => {
     const hospital = await Hospital.findByIdAndUpdate(req.params.id, { deliveryStatus }, { new: true });
     res.json(hospital);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

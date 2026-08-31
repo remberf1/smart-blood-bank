@@ -4,6 +4,9 @@ const {
   buildRequestStatusMessage,
   buildEligibleMessage,
   buildAppointmentReminder,
+  buildRequestStatusEmail,
+  buildEligibleEmail,
+  buildWelcomeEmail,
 } = require('../services/notificationService');
 
 test('request status message reflects each status', () => {
@@ -35,4 +38,21 @@ test('appointment reminder includes hospital name when provided', () => {
   const msg = buildAppointmentReminder({ appointmentDate: new Date('2026-09-01T10:00:00Z') }, 'Lagos General');
   assert.match(msg, /Lagos General/);
   assert.match(msg, /reminder/i);
+});
+
+test('email builders return a subject and a markdown-free body', () => {
+  const statusEmail = buildRequestStatusEmail({ _id: 'abc123def456', resourceType: 'blood', bloodGroup: 'O+', deliveryStatus: 'delivered' });
+  assert.match(statusEmail.subject, /delivered/i);
+  assert.ok(!statusEmail.text.includes('*')); // markdown stripped for email
+
+  const eligibleEmail = buildEligibleEmail({ name: 'Ada' });
+  assert.match(eligibleEmail.subject, /eligible/i);
+  assert.match(eligibleEmail.text, /Ada/);
+});
+
+test('welcome email names the role and a login link', () => {
+  const e = buildWelcomeEmail({ name: 'Bola', role: 'admin', email: 'bola@x.com' });
+  assert.match(e.subject, /account/i);
+  assert.match(e.text, /admin/);
+  assert.match(e.text, /login/i);
 });

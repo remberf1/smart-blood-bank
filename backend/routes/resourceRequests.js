@@ -41,7 +41,7 @@ router.post('/', auth, allowRoles('admin', 'superadmin'), validate(resourceReque
 
     res.status(201).json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -54,7 +54,7 @@ router.get('/incoming', auth, async (req, res) => {
       .sort({ requestedAt: -1 });
     res.json(requests);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -67,7 +67,7 @@ router.get('/outgoing', auth, async (req, res) => {
       .sort({ requestedAt: -1 });
     res.json(requests);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -105,7 +105,7 @@ router.put('/:id/respond', auth, allowRoles('admin', 'superadmin'), async (req, 
 
     res.json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -145,7 +145,7 @@ router.put('/:id/complete', auth, async (req, res) => {
     }
     res.json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

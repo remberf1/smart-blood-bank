@@ -14,6 +14,8 @@ import {
   ArrowRightLeft,
   BarChart3,
   UserCog,
+  HeartPulse,
+  CalendarCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -22,7 +24,9 @@ const navItems = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Inventory', href: '/dashboard/inventory', icon: Droplet },
   { name: 'Donors', href: '/dashboard/donors', icon: Users },
+  { name: 'Appointments', href: '/dashboard/appointments', icon: CalendarCheck },
   { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2 },
+  { name: 'Patient Requests', href: '/dashboard/patient-requests', icon: HeartPulse },
    { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
   { name: 'Users', href: '/dashboard/users', icon: UserCog, superadminOnly: true },

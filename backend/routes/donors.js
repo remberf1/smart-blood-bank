@@ -106,7 +106,7 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     });
   } catch (err) {
     console.error("Error registering donor:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -118,7 +118,7 @@ router.post("/refresh-eligibility", auth, allowRoles("admin", "superadmin"), asy
     const restored = await refreshDonorEligibility();
     res.json({ restored });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -211,7 +211,7 @@ router.post("/verify", auth, async (req, res) => {
     });
   } catch (err) {
     console.error("Error verifying donor:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -231,7 +231,7 @@ router.get("/phone/:phone", auth, async (req, res) => {
       lastDonationDate: donor.lastDonationDate,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -249,17 +249,47 @@ router.get("/:donorId/qrcode", auth, async (req, res) => {
 
     res.json({ qrCode: donor.qrCode });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// ==================== GET ALL DONORS (admin only) ====================
+// ==================== GET ALL DONORS (admin only, paginated) ====================
+// Query: ?page=1&limit=20&search=&bloodGroup=&eligibility=
+// Returns { data, page, limit, total, totalPages, stats } where stats reflect
+// the same filter so the summary cards stay in sync with the results.
 router.get("/", auth, isAdmin, async (req, res) => {
   try {
-    const donors = await Donor.find().select("-qrCode");
-    res.json(donors);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    if (req.query.bloodGroup) filter.bloodGroup = req.query.bloodGroup;
+    if (req.query.eligibility) filter.eligibilityStatus = req.query.eligibility;
+    if (req.query.search) {
+      const safe = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const rx = new RegExp(safe, "i");
+      filter.$or = [{ name: rx }, { phone: rx }, { email: rx }];
+    }
+
+    const [data, total, eligible, deferred, groups] = await Promise.all([
+      Donor.find(filter).select("-qrCode").sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Donor.countDocuments(filter),
+      Donor.countDocuments({ ...filter, eligibilityStatus: "eligible" }),
+      Donor.countDocuments({ ...filter, eligibilityStatus: "deferred" }),
+      Donor.distinct("bloodGroup", filter),
+    ]);
+
+    res.json({
+      data,
+      page,
+      limit,
+      total,
+      totalPages: Math.max(Math.ceil(total / limit), 1),
+      stats: { total, eligible, deferred, bloodGroups: groups.length },
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -285,7 +315,7 @@ router.put("/:donorId/eligibility", auth, async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -335,7 +365,7 @@ router.put("/:donorId", auth, async (req, res) => {
     });
   } catch (err) {
     console.error("Error updating donor:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -355,7 +385,7 @@ router.delete("/:donorId", auth, isAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error("Error deleting donor:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

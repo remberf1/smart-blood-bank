@@ -5,6 +5,7 @@ const User = require('../models/User');
 const { auth, isSuperAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { loginSchema, registerUserSchema, updateUserSchema } = require('../validators/schemas');
+const { notifyNewUser } = require('../services/notificationService');
 
 // ==================== REGISTER (Super Admin only - for creating staff) ====================
 router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async (req, res) => {
@@ -20,7 +21,10 @@ router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async
     // Create user
     const user = new User({ name, email, password, role, hospitalId });
     await user.save();
-    
+
+    // Best-effort welcome email.
+    notifyNewUser(user).catch(() => {});
+
     // Create token
     const token = jwt.sign(
       { userId: user._id, email: user.email, role: user.role, hospitalId: user.hospitalId },
@@ -40,7 +44,7 @@ router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async
     });
   } catch (err) {
     console.error('Registration error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -90,7 +94,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -103,7 +107,7 @@ router.get('/me', auth, async (req, res) => {
     }
     res.json(user);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -123,7 +127,7 @@ router.post('/change-password', auth, async (req, res) => {
     
     res.json({ message: 'Password changed successfully' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -138,7 +142,7 @@ router.get('/users', auth, async (req, res) => {
     const users = await User.find().select('-password').populate('hospitalId', 'name');
     res.json(users);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -169,7 +173,7 @@ router.put('/users/:id', auth, isSuperAdmin, validate(updateUserSchema), async (
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json(user);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

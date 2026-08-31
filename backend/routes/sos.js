@@ -14,7 +14,7 @@ router.get('/', auth, isAdmin, async (req, res) => {
       .limit(200);
     res.json(requests);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -27,7 +27,7 @@ router.get('/:id', auth, isAdmin, async (req, res) => {
     if (!request) return res.status(404).json({ error: 'SOS request not found' });
     res.json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -46,7 +46,7 @@ router.put('/:id/status', auth, isAdmin, async (req, res) => {
     if (!request) return res.status(404).json({ error: 'SOS request not found' });
     res.json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

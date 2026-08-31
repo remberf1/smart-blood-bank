@@ -14,7 +14,9 @@ router.post('/login', async (req, res) => {
 
     // Find donor by email, include password field (hidden by default)
     const donor = await Donor.findOne({ email }).select('+password');
-    if (!donor) {
+    // No account, or a donor registered without a password (e.g. via staff) —
+    // treat both as invalid credentials rather than crashing bcrypt.compare.
+    if (!donor || !donor.password) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -45,7 +47,7 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error('Donor login error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

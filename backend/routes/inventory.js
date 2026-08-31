@@ -39,7 +39,7 @@ router.post('/',auth,async (req, res) => {
     res.status(201).json(inventory);
   } catch (err) {
     console.error('Error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -52,7 +52,7 @@ router.get('/blood', async (req, res) => {
     }).populate('hospitalId', 'name address location contactPhone');
     res.json(allBlood);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -66,7 +66,7 @@ router.get('/blood/:bloodGroup', async (req, res) => {
     }).populate('hospitalId', 'name address location contactPhone');
     res.json(inventory);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -79,7 +79,7 @@ router.get('/oxygen', async (req, res) => {
     }).populate('hospitalId', 'name address location contactPhone');
     res.json(oxygen);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -89,7 +89,7 @@ router.get('/hospital/:hospitalId', async (req, res) => {
     const inventory = await Inventory.find({ hospitalId: req.params.hospitalId });
     res.json(inventory);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -120,7 +120,7 @@ router.put('/blood/:inventoryId',auth, async (req, res) => {
     const updated = await Inventory.findById(req.params.inventoryId);
     res.json(updated);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -139,7 +139,7 @@ router.put('/oxygen/:inventoryId',auth, async (req, res) => {
     await existing.save();
     res.json(existing);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -154,7 +154,7 @@ router.delete('/:inventoryId', auth, isAdmin, async (req, res) => {
     await existing.deleteOne();
     res.json({ message: 'Inventory deleted' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -181,7 +181,7 @@ router.get('/expiring', auth, async (req, res) => {
       .sort({ expiryDate: 1 });
     res.json(batches);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -191,7 +191,7 @@ router.post('/expire-run', auth, allowRoles('admin', 'superadmin'), async (req, 
     const expiredBatches = await expireDueBatches();
     res.json({ expiredBatches });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -299,7 +299,7 @@ router.get('/rank/:bloodGroup', async (req, res) => {
     
   } catch (err) {
     console.error('WPS Ranking Error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 module.exports = router;

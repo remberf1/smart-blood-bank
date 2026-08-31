@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const PatientRequest = require("../models/PatientRequest");
 const { allocateBlood } = require("../services/allocationService");
-const { consumeBloodFEFO } = require("../services/inventoryService");
+const { consumeForDelivery } = require("../services/inventoryService");
 const { notifyRequestStatus } = require("../services/notificationService");
 const { auth } = require("../middleware/auth");
 const { allowRoles, canAccessHospital } = require("../middleware/roles");
@@ -26,7 +26,7 @@ router.post("/", validate(patientRequestSchema), async (req, res) => {
     if (resourceType === "blood") allocateBlood().catch(console.error);
     res.status(201).json({ message: "Request received", requestId: request._id, request });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -38,11 +38,54 @@ router.get("/track/:phone", async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(requests);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // ------------------- Hospital admin (authentication required) -------------------
+// List patient requests (admin/staff = own hospital; superadmin = all).
+// Query: ?status=&page=&limit=&hospitalId= (hospitalId superadmin-only).
+router.get("/", auth, async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const skip = (page - 1) * limit;
+
+    // A hospital user with no hospital sees nothing (avoid an unscoped query).
+    if (req.user.role !== "superadmin" && !req.user.hospitalId) {
+      return res.json({ data: [], page, limit, total: 0, totalPages: 1 });
+    }
+
+    const filter = {};
+    if (req.query.status) filter.deliveryStatus = req.query.status;
+    if (req.user.role !== "superadmin") {
+      filter.$or = [
+        { allocatedHospitalId: req.user.hospitalId },
+        { preferredHospitalId: req.user.hospitalId },
+      ];
+    } else if (req.query.hospitalId) {
+      filter.$or = [
+        { allocatedHospitalId: req.query.hospitalId },
+        { preferredHospitalId: req.query.hospitalId },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      PatientRequest.find(filter)
+        .populate("preferredHospitalId", "name")
+        .populate("allocatedHospitalId", "name")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      PatientRequest.countDocuments(filter),
+    ]);
+
+    res.json({ data, page, limit, total, totalPages: Math.max(Math.ceil(total / limit), 1) });
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get all requests for a specific hospital (own hospital or superadmin)
 router.get("/hospital/:hospitalId", auth, async (req, res) => {
   try {
@@ -53,7 +96,7 @@ router.get("/hospital/:hospitalId", auth, async (req, res) => {
       .sort({ scheduledTime: 1, createdAt: 1 });
     res.json(requests);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -80,7 +123,7 @@ router.get("/:id/trace", auth, async (req, res) => {
       fulfilledBatches: request.fulfilledBatches,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -99,34 +142,29 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
       return res.status(403).json({ error: "You can only update your own hospital's requests" });
     }
 
-    // Consume stock exactly once, on the transition into 'delivered', drawing
-    // FEFO from dated batches and recording which batches/donors fulfilled it.
-    if (
+    // Delivering a blood request atomically consumes FEFO stock AND marks the
+    // request delivered (transaction) — no oversell, no double-consume on retry.
+    const isBloodDelivery =
       deliveryStatus === "delivered" &&
       request.deliveryStatus !== "delivered" &&
       request.resourceType === "blood" &&
-      request.allocatedHospitalId
-    ) {
-      const result = await consumeBloodFEFO({
-        hospitalId: request.allocatedHospitalId,
-        bloodGroup: request.bloodGroup,
-        units: request.units,
-      });
+      request.allocatedHospitalId;
+
+    if (isBloodDelivery) {
+      const result = await consumeForDelivery(request); // consumes + marks delivered + saves
       if (!result.ok) {
         return res.status(409).json({
           error: `Allocated hospital no longer has enough non-expired stock (short ${result.shortfall} unit(s))`,
         });
       }
-      request.fulfilledBatches = result.fulfilledBatches;
+    } else {
+      request.deliveryStatus = deliveryStatus;
+      request.updatedAt = Date.now();
+      if (deliveryStatus === "approved") request.approvedAt = Date.now();
+      if (deliveryStatus === "in-transit") request.inTransitAt = Date.now();
+      if (deliveryStatus === "delivered") request.deliveredAt = Date.now();
+      await request.save();
     }
-
-    request.deliveryStatus = deliveryStatus;
-    request.updatedAt = Date.now();
-    if (deliveryStatus === "approved") request.approvedAt = Date.now();
-    if (deliveryStatus === "in-transit") request.inTransitAt = Date.now();
-    if (deliveryStatus === "delivered") request.deliveredAt = Date.now();
-
-    await request.save();
 
     // Best-effort: notify the patient when the status actually changed.
     if (deliveryStatus !== previousStatus) {
@@ -135,7 +173,34 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
 
     res.json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Assign (or claim) a fulfilling hospital for a request. Superadmin may assign
+// any hospital; an admin/staff may claim it for their own hospital. Moves a
+// pending request to 'approved'.
+router.post("/:id/assign", auth, allowRoles("admin", "superadmin"), async (req, res) => {
+  try {
+    const { hospitalId } = req.body;
+    if (!hospitalId) return res.status(400).json({ error: "hospitalId is required" });
+    if (!canAccessHospital(req.user, hospitalId)) {
+      return res.status(403).json({ error: "You can only assign requests to your own hospital" });
+    }
+    const request = await PatientRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ error: "Request not found" });
+
+    request.allocatedHospitalId = hospitalId;
+    if (request.deliveryStatus === "pending") {
+      request.deliveryStatus = "approved";
+      request.approvedAt = Date.now();
+    }
+    request.updatedAt = Date.now();
+    await request.save();
+    notifyRequestStatus(request).catch(() => {});
+    res.json(request);
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -156,7 +221,7 @@ router.put("/:requestId", auth, allowRoles("admin", "superadmin"), async (req, r
     await request.save();
     res.json(request);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

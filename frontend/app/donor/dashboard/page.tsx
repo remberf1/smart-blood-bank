@@ -45,7 +45,6 @@ export default function DonorDashboard() {
       router.push('/donor/login');
       return;
     }
-    apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     Promise.all([
       apiClient.get('/donor/auth/profile'),
       apiClient.get('/hospitals'),
@@ -66,8 +65,8 @@ export default function DonorDashboard() {
   const handleSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await apiClient.post('/donor/appointments', formData);
-      setMessage('Appointment scheduled!');
+      await apiClient.post('/donor/appointments', formData);
+      setMessage('Appointment requested — the hospital will confirm it shortly.');
       setFormData({ hospitalId: '', appointmentDate: '', notes: '' });
       // Refresh appointments list
       const appointmentsRes = await apiClient.get('/donor/appointments');
@@ -109,8 +108,14 @@ export default function DonorDashboard() {
       ? 'text-yellow-600'
       : 'text-gray-600';
 
-  const futureAppointments = appointments.filter(a => a.status === 'scheduled' && new Date(a.appointmentDate) > new Date());
-  const pastAppointments = appointments.filter(a => a.status !== 'scheduled' || new Date(a.appointmentDate) <= new Date());
+  // Friendly labels for the donor's view of appointment status.
+  const statusLabel = (s: string) =>
+    s === 'pending' ? 'Awaiting confirmation' : s === 'scheduled' ? 'Confirmed' : s;
+  const isActive = (s: string) => s === 'pending' || s === 'scheduled';
+
+  const futureAppointments = appointments.filter(a => isActive(a.status) && new Date(a.appointmentDate) > new Date());
+  const pastAppointments = appointments.filter(a => !isActive(a.status) || new Date(a.appointmentDate) <= new Date());
+  const nowLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
   return (
     <div className="max-w-5xl mx-auto p-6">
@@ -167,6 +172,7 @@ export default function DonorDashboard() {
               value={formData.appointmentDate}
               onChange={(e) => setFormData({ ...formData, appointmentDate: e.target.value })}
               className="w-full p-2 border rounded"
+              min={nowLocal}
               required
             />
           </div>
@@ -197,11 +203,15 @@ export default function DonorDashboard() {
                 <div>
                   <p className="font-medium">{apt.hospitalId?.name}</p>
                   <p className="text-sm text-gray-500">
-                    {new Date(apt.appointmentDate).toLocaleString()} – {apt.status}
+                    {new Date(apt.appointmentDate).toLocaleString()}
+                    {' · '}
+                    <span className={apt.status === 'pending' ? 'text-amber-600' : 'text-blue-600'}>
+                      {statusLabel(apt.status)}
+                    </span>
                   </p>
                   {apt.notes && <p className="text-sm">Note: {apt.notes}</p>}
                 </div>
-                {apt.status === 'scheduled' && (
+                {isActive(apt.status) && (
                   <button
                     onClick={() => handleCancel(apt._id)}
                     className="text-red-600 text-sm hover:underline"
@@ -224,7 +234,7 @@ export default function DonorDashboard() {
               <li key={apt._id} className="py-3">
                 <p className="font-medium">{apt.hospitalId?.name}</p>
                 <p className="text-sm text-gray-500">
-                  {new Date(apt.appointmentDate).toLocaleString()} – {apt.status}
+                  {new Date(apt.appointmentDate).toLocaleString()} · {statusLabel(apt.status)}
                 </p>
               </li>
             ))}

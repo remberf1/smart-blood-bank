@@ -1,4 +1,15 @@
 require('dotenv').config();
+
+// Fail fast on missing/weak required configuration rather than booting insecure.
+const missingEnv = ['MONGODB_URI', 'JWT_SECRET'].filter((k) => !process.env[k]);
+if (missingEnv.length) {
+  console.error(`Missing required environment variable(s): ${missingEnv.join(', ')}`);
+  process.exit(1);
+}
+if (process.env.JWT_SECRET.length < 16) {
+  console.warn('⚠️  JWT_SECRET is short (<16 chars). Use a long random secret in production.');
+}
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -92,6 +103,7 @@ const donorAppointmentRoutes = require('./routes/donorAppointments');
 const resourceRequestRoutes = require('./routes/resourceRequests');
 const sosRoutes = require('./routes/sos');
 const analyticsRoutes = require('./routes/analytics');
+const appointmentRoutes = require('./routes/appointments');
 
 // Mount routes
 app.use('/api/inventory', inventoryRoutes);
@@ -105,6 +117,7 @@ app.use('/api/donor/appointments', donorAppointmentRoutes);
 app.use('/api/resource-requests', resourceRequestRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/appointments', appointmentRoutes);
 
 // Simple health check
 app.get('/', (req, res) => {

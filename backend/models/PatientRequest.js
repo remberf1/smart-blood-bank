@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const patientRequestSchema = new mongoose.Schema({
   patientName: { type: String },
   contactPhone: { type: String, required: true },
+  email: { type: String }, // optional — for email status updates
   resourceType: { type: String, enum: ['blood', 'oxygen'], required: true },
   bloodGroup: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] },
   units: { type: Number, required: true, default: 1 },

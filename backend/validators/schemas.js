@@ -44,6 +44,7 @@ const patientRequestSchema = z
   .object({
     patientName: z.string().optional(),
     contactPhone: z.string().min(1, 'Contact phone is required'),
+    email: optionalEmail,
     resourceType: z.enum(['blood', 'oxygen']),
     bloodGroup: bloodGroup.optional(),
     units: z.coerce.number().int().positive().default(1),

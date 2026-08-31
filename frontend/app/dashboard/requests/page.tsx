@@ -220,8 +220,8 @@ export default function ResourceRequestsPage() {
   ).filter((h) => h._id !== user?.hospitalId);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">Resource Requests</h1>
           <p className="text-gray-500">
