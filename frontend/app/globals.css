@@ -1,51 +1,78 @@
 @import "tailwindcss";
 
-@layer base {
-  :root {
-    /* Nova preset base colors */
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    
-    /* YOUR BRAND COLORS - Replace defaults */
-    --primary: 358 98% 30%;      /* #980002 - Blood Red */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 217 68% 21%;    /* #12355b - Deep Blue */
-    --secondary-foreground: 0 0% 100%;
-    
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 358 98% 30%;         /* Your red for focus rings */
-    --radius: 0.5rem;
-  }
+/*
+ * Map the design tokens below onto Tailwind v4 utilities so that
+ * bg-primary / text-muted-foreground / border-border / ring-ring etc.
+ * (used throughout the shadcn + base-ui components) actually generate CSS.
+ * Without this @theme block those utilities are silently dropped.
+ */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-primary-light: hsl(var(--primary-light));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 358 98% 35%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 217 68% 25%;
-    --secondary-foreground: 0 0% 100%;
-  }
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.25rem);
+}
+
+:root {
+  /* Warm, clinical neutrals biased toward the blood-red accent */
+  --background: 0 24% 98.5%;      /* soft warm white */
+  --foreground: 345 15% 12%;      /* warm near-black */
+  --card: 0 0% 100%;
+  --card-foreground: 345 15% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 345 15% 12%;
+
+  --primary: 356 72% 45%;         /* blood red — brighter, cleaner than the old #980002 */
+  --primary-foreground: 0 0% 100%;
+  --primary-light: 356 70% 96%;   /* soft red surface (chips, active nav) */
+
+  --secondary: 212 64% 22%;       /* deep blue */
+  --secondary-foreground: 0 0% 100%;
+
+  --muted: 18 18% 96%;            /* faint warm grey surface */
+  --muted-foreground: 345 8% 44%;
+  --accent: 18 20% 95%;           /* hover surface */
+  --accent-foreground: 345 15% 12%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 20 16% 90%;
+  --input: 20 16% 89%;
+  --ring: 356 72% 45%;
+
+  --radius: 0.625rem;
 }
 
 @layer base {
   * {
-    border-color: var(--border);
+    border-color: hsl(var(--border));
   }
   body {
-    background-color: var(--background);
-    color: var(--foreground);
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.15);
   }
 }

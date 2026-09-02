@@ -14,7 +14,7 @@ const donorSchema = new mongoose.Schema({
     type: { type: String, enum: ["Point"], default: "Point" },
     coordinates: { type: [Number], required: true },
   },
-  dateOfBirth: { type: Date, required: true },
+  dateOfBirth: { type: Date }, // optional — WhatsApp quick-reg omits it; staff verify age at donation
   gender: { type: String, enum: ["Male", "Female", "Other"] },
   // No hard min here: registration logic defers under-threshold donors
   // instead of rejecting them outright (see routes/donors.js eligibility rules).

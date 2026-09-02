@@ -28,8 +28,10 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Users, 
+import { PageHeader } from '@/components/ui/page-header';
+import { Loading, EmptyState } from '@/components/ui/states';
+import {
+  Users,
   Droplet, 
   Calendar, 
   Phone, 
@@ -121,7 +123,7 @@ export default function DonorsPage() {
       case 'deferred':
         return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">Deferred</Badge>;
       case 'pending':
-        return <Badge variant="outline" className="bg-gray-100 text-gray-600">Pending</Badge>;
+        return <Badge variant="outline" className="bg-muted text-muted-foreground">Pending</Badge>;
       default:
         return <Badge variant="destructive">{status}</Badge>;
     }
@@ -129,7 +131,7 @@ export default function DonorsPage() {
 
   const getLastDonationStatus = (lastDonationDate: string | null) => {
     if (!lastDonationDate) {
-      return { text: 'Never donated', icon: Clock, color: 'text-gray-400' };
+      return { text: 'Never donated', icon: Clock, color: 'text-muted-foreground' };
     }
     const daysSince = Math.floor((Date.now() - new Date(lastDonationDate).getTime()) / (1000 * 60 * 60 * 24));
     if (daysSince < 90) {
@@ -139,30 +141,18 @@ export default function DonorsPage() {
   };
 
   return (
-    <div>
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Donors</h1>
-          <p className="text-gray-500 text-sm mt-1">Manage registered blood donors</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-sm text-gray-500">Total Donors</p>
-            <p className="text-2xl font-bold text-primary">{stats.total}</p>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="Donors" subtitle="Manage registered blood donors" />
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">Total Donors</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Donors</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.total}</div>
-            <p className="text-xs text-gray-400 mt-1">Registered volunteers</p>
+            <p className="text-xs text-muted-foreground mt-1">Registered volunteers</p>
           </CardContent>
         </Card>
         <Card className="bg-green-50 border-green-200">
@@ -185,19 +175,19 @@ export default function DonorsPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">Blood Groups</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Blood Groups</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.bloodGroups}</div>
-            <p className="text-xs text-gray-400 mt-1">Types represented</p>
+            <p className="text-xs text-muted-foreground mt-1">Types represented</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Search Bar */}
-      <div className="mb-6">
+      <div>
         <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search by name, phone, or blood group..."
             value={searchTerm}
@@ -225,19 +215,15 @@ export default function DonorsPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                      <div className="flex items-center justify-center gap-2">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                        Loading donors...
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                  <TableRow><TableCell colSpan={7}><Loading label="Loading donors…" /></TableCell></TableRow>
                 ) : donors.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                      <Users className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-                      {searchTerm ? 'No donors match your search.' : 'No donors registered yet.'}
+                    <TableCell colSpan={7}>
+                      <EmptyState
+                        icon={Users}
+                        title={searchTerm ? 'No donors match your search' : 'No donors registered yet'}
+                        hint={searchTerm ? undefined : 'Donors who sign up or are added by staff will appear here.'}
+                      />
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -245,12 +231,12 @@ export default function DonorsPage() {
                     const lastDonation = getLastDonationStatus(donor.lastDonationDate);
                     const LastDonationIcon = lastDonation.icon;
                     return (
-                      <TableRow key={donor._id} className="hover:bg-gray-50">
+                      <TableRow key={donor._id} className="hover:bg-muted/50">
                         <TableCell>
                           <div>
-                            <div className="font-medium text-gray-800">{donor.name}</div>
+                            <div className="font-medium text-foreground">{donor.name}</div>
                             {donor.email && (
-                              <div className="flex items-center gap-1 text-xs text-gray-400">
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                 <Mail className="h-3 w-3" />
                                 {donor.email}
                               </div>
@@ -259,7 +245,7 @@ export default function DonorsPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1 text-sm">
-                            <Phone className="h-3 w-3 text-gray-400" />
+                            <Phone className="h-3 w-3 text-muted-foreground" />
                             {donor.phone}
                           </div>
                         </TableCell>
@@ -278,7 +264,7 @@ export default function DonorsPage() {
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm text-gray-500">
+                        <TableCell className="text-sm text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             {new Date(donor.createdAt).toLocaleDateString()}
@@ -308,7 +294,7 @@ export default function DonorsPage() {
       {/* Pagination */}
       {stats.total > 0 && (
         <div className="flex items-center justify-between mt-4">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             Page {page} of {totalPages} · {stats.total} donor{stats.total === 1 ? '' : 's'}
           </p>
           <div className="flex gap-2">
@@ -344,7 +330,7 @@ export default function DonorsPage() {
           {selectedDonor && (
             <div className="text-center py-4">
               <div className="mb-4">
-                <div className="w-48 h-48 mx-auto bg-white p-4 rounded-lg border">
+                <div className="w-48 h-48 mx-auto bg-card p-4 rounded-lg border">
                   {qrCode ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={qrCode} alt="QR Code" className="w-full h-full object-contain" />

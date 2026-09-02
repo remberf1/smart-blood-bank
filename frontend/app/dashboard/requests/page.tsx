@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import apiClient from "../../api/client";
 import { useAuth } from "../../contexts/AuthContext";
+import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -221,29 +222,24 @@ export default function ResourceRequestsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold">Resource Requests</h1>
-          <p className="text-gray-500">
-            Request blood or oxygen from other hospitals
-          </p>
-        </div>
-        <Button
-          onClick={() => setDialogOpen(true)}
-          className="bg-red-600 hover:bg-red-700"
-        >
-          <ArrowRightLeft className="h-4 w-4 mr-2" />
-          New Request
-        </Button>
-      </div>
+      <PageHeader
+        title="Resource Requests"
+        subtitle="Request blood or oxygen from other hospitals"
+        action={
+          <Button onClick={() => setDialogOpen(true)}>
+            <ArrowRightLeft className="h-4 w-4 mr-2" />
+            New Request
+          </Button>
+        }
+      />
 
       {/* Incoming Requests */}
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4">Incoming Requests</h2>
         {incomingRequests.length === 0 ? (
-          <p className="text-gray-500">No incoming requests.</p>
+          <p className="text-muted-foreground">No incoming requests.</p>
         ) : (
-          <div className="bg-white rounded shadow overflow-hidden">
+          <div className="bg-card rounded shadow overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -276,9 +272,9 @@ export default function ResourceRequestsPage() {
                     <TableCell>{getStatusBadge(req.status)}</TableCell>
                     <TableCell className="max-w-[220px]">
                       {req.notes ? (
-                        <span className="text-sm text-gray-700 whitespace-pre-wrap break-words">{req.notes}</span>
+                        <span className="text-sm text-foreground whitespace-pre-wrap break-words">{req.notes}</span>
                       ) : (
-                        <span className="text-gray-300">—</span>
+                        <span className="text-muted-foreground/60">—</span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -316,9 +312,9 @@ export default function ResourceRequestsPage() {
       <div>
         <h2 className="text-xl font-semibold mb-4">Outgoing Requests</h2>
         {outgoingRequests.length === 0 ? (
-          <p className="text-gray-500">No outgoing requests.</p>
+          <p className="text-muted-foreground">No outgoing requests.</p>
         ) : (
-          <div className="bg-white rounded shadow overflow-hidden">
+          <div className="bg-card rounded shadow overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -351,9 +347,9 @@ export default function ResourceRequestsPage() {
                     <TableCell>{getStatusBadge(req.status)}</TableCell>
                     <TableCell className="max-w-[220px]">
                       {req.notes ? (
-                        <span className="text-sm text-gray-700 whitespace-pre-wrap break-words">{req.notes}</span>
+                        <span className="text-sm text-foreground whitespace-pre-wrap break-words">{req.notes}</span>
                       ) : (
-                        <span className="text-gray-300">—</span>
+                        <span className="text-muted-foreground/60">—</span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -381,7 +377,7 @@ export default function ResourceRequestsPage() {
 
       {/* Create Request Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md bg-white">
+        <DialogContent className="sm:max-w-md bg-card">
           <DialogHeader>
             <DialogTitle>Request Blood / Oxygen</DialogTitle>
             <DialogDescription>
@@ -462,7 +458,7 @@ export default function ResourceRequestsPage() {
                   </SelectContent>
                 </Select>
                 {formData.resourceType === "blood" && !formData.bloodGroup && (
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     Select blood group first
                   </p>
                 )}

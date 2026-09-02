@@ -6,6 +6,7 @@ const {
   buildAppointmentReminder,
   buildRequestStatusEmail,
   buildEligibleEmail,
+  buildAppointmentReminderEmail,
   buildWelcomeEmail,
 } = require('../services/notificationService');
 
@@ -55,4 +56,34 @@ test('welcome email names the role and a login link', () => {
   assert.match(e.subject, /account/i);
   assert.match(e.text, /admin/);
   assert.match(e.text, /login/i);
+});
+
+test('every email builder returns a subject, plain text, and branded html', () => {
+  const builders = [
+    buildRequestStatusEmail({ _id: 'abc123def456', resourceType: 'blood', bloodGroup: 'O+', deliveryStatus: 'delivered', contactPhone: '+2348012345678' }),
+    buildEligibleEmail({ name: 'Ada', phone: '+2348012345678' }),
+    buildAppointmentReminderEmail({ appointmentDate: new Date('2026-09-01T10:00:00Z') }, 'LUTH'),
+    buildWelcomeEmail({ name: 'Bola', role: 'admin', email: 'bola@x.com' }),
+  ];
+  for (const e of builders) {
+    assert.ok(e.subject && e.subject.length > 0, 'has subject');
+    assert.ok(e.text && e.text.length > 0, 'has plain text');
+    assert.ok(e.html && e.html.length > 0, 'has html');
+    assert.match(e.html, /<!DOCTYPE html>/i, 'html is a full document');
+    assert.match(e.html, /Smart Blood Bank/, 'html carries the brand');
+    assert.ok(!e.text.includes('<'), 'plain text is free of html tags');
+  }
+});
+
+test('html email escapes interpolated values to prevent injection', () => {
+  const e = buildWelcomeEmail({ name: 'Bola <script>alert(1)</script>', role: 'admin', email: 'x@x.com' });
+  assert.ok(!e.html.includes('<script>'), 'raw script tag is escaped');
+  assert.match(e.html, /&lt;script&gt;/, 'angle brackets are entity-encoded');
+});
+
+test('status emails carry a status-appropriate heading', () => {
+  const delivered = buildRequestStatusEmail({ _id: 'abc123def456', resourceType: 'blood', bloodGroup: 'O+', deliveryStatus: 'delivered' });
+  assert.match(delivered.html, /delivered/i);
+  const transit = buildRequestStatusEmail({ _id: 'abc123def456', resourceType: 'blood', bloodGroup: 'O+', deliveryStatus: 'in-transit' });
+  assert.match(transit.html, /on the way|transit/i);
 });

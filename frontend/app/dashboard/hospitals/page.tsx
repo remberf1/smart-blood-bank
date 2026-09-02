@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Building2, Plus, Edit, Trash2, MapPin, Phone } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 interface Hospital {
   _id: string;
@@ -129,45 +130,39 @@ export default function HospitalsPage() {
   };
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Hospitals</h1>
-          <p className="text-gray-500 text-sm mt-1">Manage registered healthcare facilities</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-sm text-gray-500">Total Hospitals</p>
-            <p className="text-2xl font-bold text-primary">{hospitals.length}</p>
-          </div>
+      <PageHeader
+        title="Hospitals"
+        subtitle="Manage registered healthcare facilities"
+        action={
           <Button onClick={openAddDialog}>
             <Plus className="h-4 w-4 mr-2" />
             Add Hospital
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">Total Hospitals</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Hospitals</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{hospitals.length}</div>
-            <p className="text-xs text-gray-400 mt-1">Registered facilities</p>
+            <p className="text-xs text-muted-foreground mt-1">Registered facilities</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">Recently Added</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Recently Added</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {hospitals.filter(h => new Date(h.createdAt) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length}
             </div>
-            <p className="text-xs text-gray-400 mt-1">Last 30 days</p>
+            <p className="text-xs text-muted-foreground mt-1">Last 30 days</p>
           </CardContent>
         </Card>
         <Card className="bg-primary/5 border-primary/20">
@@ -198,7 +193,7 @@ export default function HospitalsPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-gray-500">
+                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                       <div className="flex items-center justify-center gap-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
                         Loading hospitals...
@@ -207,31 +202,31 @@ export default function HospitalsPage() {
                   </TableRow>
                 ) : hospitals.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-gray-500">
-                      <Building2 className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <Building2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground/60" />
                       No hospitals found. Click "Add Hospital" to get started.
                     </TableCell>
                   </TableRow>
                 ) : (
                   hospitals.map((hospital) => (
-                    <TableRow key={hospital._id} className="hover:bg-gray-50">
+                    <TableRow key={hospital._id} className="hover:bg-muted/50">
                       <TableCell>
-                        <div className="font-medium text-gray-800">{hospital.name}</div>
+                        <div className="font-medium text-foreground">{hospital.name}</div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1 text-sm text-gray-500">
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
                           <MapPin className="h-3 w-3" />
                           {hospital.address}
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1 text-sm">
-                          <Phone className="h-3 w-3 text-gray-400" />
+                          <Phone className="h-3 w-3 text-muted-foreground" />
                           {hospital.contactPhone}
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="bg-gray-50">
+                        <Badge variant="outline" className="bg-muted/50">
                           {new Date(hospital.createdAt).toLocaleDateString()}
                         </Badge>
                       </TableCell>

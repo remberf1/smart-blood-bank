@@ -6,10 +6,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/ui/page-header';
+import { Loading, EmptyState } from '@/components/ui/states';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Droplet, Wind } from 'lucide-react';
+import { Droplet, Wind, Inbox } from 'lucide-react';
 
 interface Hospital { _id: string; name: string }
 interface PatientRequest {
@@ -37,7 +39,7 @@ const NEXT: Record<string, { status: string; label: string; variant?: any }[]> =
 
 function statusBadge(s: string) {
   const map: Record<string, string> = {
-    pending: 'bg-gray-100 text-gray-700',
+    pending: 'bg-muted text-foreground',
     approved: 'bg-blue-100 text-blue-700',
     'in-transit': 'bg-amber-100 text-amber-700',
     delivered: 'bg-emerald-100 text-emerald-700',
@@ -104,10 +106,7 @@ export default function PatientRequestsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-800">Patient Requests</h1>
-        <p className="text-sm text-gray-400">Requests submitted by patients &amp; families</p>
-      </div>
+      <PageHeader title="Patient Requests" subtitle="Requests submitted by patients & families" />
 
       {/* Status filter */}
       <div className="flex flex-wrap gap-2">
@@ -116,7 +115,7 @@ export default function PatientRequestsPage() {
             key={s || 'all'}
             onClick={() => { setStatus(s); setPage(1); }}
             className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-              status === s ? 'bg-primary text-white border-primary' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              status === s ? 'bg-primary text-white border-primary' : 'bg-card text-muted-foreground border-border hover:bg-muted/50'
             }`}
           >
             {s === '' ? 'All' : s}
@@ -142,14 +141,14 @@ export default function PatientRequestsPage() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={9} className="text-center py-8 text-gray-400">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9}><Loading /></TableCell></TableRow>
               ) : requests.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center py-8 text-gray-400">No patient requests{status ? ` (${status})` : ''}.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9}><EmptyState icon={Inbox} title={`No patient requests${status ? ` (${status})` : ''}`} hint="New requests from the public form or WhatsApp will appear here." /></TableCell></TableRow>
               ) : (
                 requests.map((r) => (
                   <TableRow key={r._id}>
-                    <TableCell className="font-medium">{r.patientName || <span className="text-gray-400">—</span>}</TableCell>
-                    <TableCell className="text-sm text-gray-500">
+                    <TableCell className="font-medium">{r.patientName || <span className="text-muted-foreground">—</span>}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
                       <div>{r.contactPhone}</div>
                       {r.email && <div className="text-xs">{r.email}</div>}
                     </TableCell>
@@ -162,13 +161,13 @@ export default function PatientRequestsPage() {
                     </TableCell>
                     <TableCell>{r.units}</TableCell>
                     <TableCell>
-                      <Badge className={r.urgency === 'emergency' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}>{r.urgency}</Badge>
+                      <Badge className={r.urgency === 'emergency' ? 'bg-red-100 text-red-700' : 'bg-muted text-muted-foreground'}>{r.urgency}</Badge>
                     </TableCell>
                     <TableCell>{statusBadge(r.deliveryStatus)}</TableCell>
                     <TableCell className="text-sm">
-                      {r.allocatedHospitalId?.name || r.preferredHospitalId?.name || <span className="text-gray-400">Unassigned</span>}
+                      {r.allocatedHospitalId?.name || r.preferredHospitalId?.name || <span className="text-muted-foreground">Unassigned</span>}
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500">{new Date(r.createdAt).toLocaleString()}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex flex-col items-end gap-2">
                         {canAct(r) && (NEXT[r.deliveryStatus] || []).map((a) => (
@@ -181,7 +180,7 @@ export default function PatientRequestsPage() {
                             <select
                               value={assignSel[r._id] || ''}
                               onChange={(e) => setAssignSel((s) => ({ ...s, [r._id]: e.target.value }))}
-                              className="border border-gray-300 rounded p-1 text-xs max-w-[140px]"
+                              className="border border-input rounded p-1 text-xs max-w-[140px]"
                             >
                               <option value="">Assign hospital…</option>
                               {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name}</option>)}
@@ -201,7 +200,7 @@ export default function PatientRequestsPage() {
 
       {total > 0 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-500">Page {page} of {totalPages} · {total} request{total === 1 ? '' : 's'}</p>
+          <p className="text-sm text-muted-foreground">Page {page} of {totalPages} · {total} request{total === 1 ? '' : 's'}</p>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(p - 1, 1))} disabled={page <= 1 || loading}>Previous</Button>
             <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(p + 1, totalPages))} disabled={page >= totalPages || loading}>Next</Button>

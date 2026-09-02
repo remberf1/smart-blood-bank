@@ -30,14 +30,14 @@ function Kpi({ icon: Icon, label, value, sub, color, bg, href }: any) {
   const body = (
     <Card className="hover:shadow-md transition-shadow h-full">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium text-gray-500">{label}</CardTitle>
+        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
         <div className={`p-2 rounded-lg ${bg}`}>
           <Icon className={`h-4 w-4 ${color}`} />
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold text-gray-800">{value}</div>
-        {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+        <div className="text-2xl font-bold text-foreground">{value}</div>
+        {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
       </CardContent>
     </Card>
   );
@@ -49,11 +49,11 @@ function Bar({ label, value, max, tone = 'primary' }: { label: string; value: nu
   const color = value < LOW_STOCK ? 'bg-red-500' : tone === 'primary' ? 'bg-primary' : 'bg-emerald-500';
   return (
     <div className="flex items-center gap-3">
-      <span className="w-10 text-sm font-medium text-gray-600 shrink-0">{label}</span>
-      <div className="flex-1 h-5 bg-gray-100 rounded overflow-hidden">
+      <span className="w-10 text-sm font-medium text-muted-foreground shrink-0">{label}</span>
+      <div className="flex-1 h-5 bg-muted rounded overflow-hidden">
         <div className={`h-full ${color} rounded transition-all`} style={{ width: `${width}%` }} />
       </div>
-      <span className="w-8 text-sm text-gray-700 text-right shrink-0">{value}</span>
+      <span className="w-8 text-sm text-foreground text-right shrink-0">{value}</span>
     </div>
   );
 }
@@ -107,8 +107,8 @@ export default function DashboardHome() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
-        <p className="text-gray-500 mt-1">Welcome back, {user?.name}</p>
+        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+        <p className="text-muted-foreground mt-1">Welcome back, {user?.name}</p>
       </div>
 
       {/* KPIs */}
@@ -150,7 +150,7 @@ export default function DashboardHome() {
             {stock.map((s) => (
               <Bar key={s.bloodGroup} label={s.bloodGroup} value={s.units} max={stockMax} />
             ))}
-            <p className="text-xs text-gray-400 pt-1">Red bars are below {LOW_STOCK} units.</p>
+            <p className="text-xs text-muted-foreground pt-1">Red bars are below {LOW_STOCK} units.</p>
           </CardContent>
         </Card>
 
@@ -163,23 +163,23 @@ export default function DashboardHome() {
             <Metric icon={CheckCircle2} label="Fulfillment" value={pct(summary?.fulfillmentRate ?? 0)} tone="text-emerald-600" />
             <Metric icon={Clock} label="Avg delivery" value={summary?.avgDeliveryHours != null ? `${summary.avgDeliveryHours}h` : '—'} tone="text-blue-600" />
             <Metric icon={HeartPulse} label="Donated" value={`${summary?.donationsLast30d ?? 0} u`} tone="text-red-600" />
-            <Metric icon={Trash2} label="Wastage" value={`${summary?.wastageUnits30d ?? 0} u`} tone="text-gray-600" />
+            <Metric icon={Trash2} label="Wastage" value={`${summary?.wastageUnits30d ?? 0} u`} tone="text-muted-foreground" />
           </CardContent>
         </Card>
       </div>
 
       {/* Quick links */}
       <div>
-        <h2 className="text-sm font-medium text-gray-500 mb-3">Quick actions</h2>
+        <h2 className="text-sm font-medium text-muted-foreground mb-3">Quick actions</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {links.map((l) => (
             <Link key={l.href} href={l.href}>
               <Card className="hover:shadow-md hover:border-primary/40 transition-all">
                 <CardContent className="p-4 flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
                     <l.icon className="h-4 w-4 text-primary" /> {l.name}
                   </span>
-                  <ArrowRight className="h-4 w-4 text-gray-300" />
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/60" />
                 </CardContent>
               </Card>
             </Link>
@@ -193,12 +193,12 @@ export default function DashboardHome() {
 function Metric({ icon: Icon, label, value, tone }: any) {
   return (
     <div className="flex items-center gap-3">
-      <div className="p-2 rounded-lg bg-gray-50">
+      <div className="p-2 rounded-lg bg-muted/50">
         <Icon className={`h-4 w-4 ${tone}`} />
       </div>
       <div>
-        <p className="text-lg font-bold text-gray-800 leading-none">{value}</p>
-        <p className="text-xs text-gray-400 mt-1">{label}</p>
+        <p className="text-lg font-bold text-foreground leading-none">{value}</p>
+        <p className="text-xs text-muted-foreground mt-1">{label}</p>
       </div>
     </div>
   );

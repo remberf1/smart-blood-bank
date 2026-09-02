@@ -243,8 +243,19 @@ router.get("/:donorId/qrcode", auth, async (req, res) => {
       return res.status(404).json({ error: "Donor not found" });
     }
 
+    // Generate the QR on demand if this donor never had one (e.g. seeded or
+    // staff-created), so every valid donor always has a scannable code.
     if (!donor.qrCode) {
-      return res.status(404).json({ error: "QR code not generated yet" });
+      const qrToken = jwt.sign(
+        { donorId: donor._id, type: "donor-verify" },
+        process.env.JWT_SECRET
+      );
+      donor.qrCode = await QRCode.toDataURL(qrToken, {
+        errorCorrectionLevel: "H",
+        margin: 1,
+        width: 300,
+      });
+      await donor.save();
     }
 
     res.json({ qrCode: donor.qrCode });

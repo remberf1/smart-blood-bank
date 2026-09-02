@@ -18,6 +18,11 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
+// Behind a proxy/tunnel (ngrok, load balancer): trust X-Forwarded-* so
+// req.protocol is 'https' and req.ip is the real client. Needed for correct
+// Twilio webhook signature validation and accurate rate limiting.
+app.set('trust proxy', 1);
+
 // Security headers
 app.use(helmet());
 

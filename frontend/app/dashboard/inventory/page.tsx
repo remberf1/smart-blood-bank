@@ -32,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Trash2, Droplet, Wind } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import { PageHeader } from "@/components/ui/page-header";
 
 interface Hospital {
   _id: string;
@@ -246,16 +247,14 @@ export default function InventoryPage() {
   if (loading) return <div className="p-8 text-center">Loading...</div>;
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Inventory Management</h1>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="Inventory" subtitle="Blood and oxygen stock across hospitals" />
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
               Hospitals
             </CardTitle>
           </CardHeader>
@@ -267,7 +266,7 @@ export default function InventoryPage() {
           <>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-500">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
                   Blood Types Available
                 </CardTitle>
               </CardHeader>
@@ -277,7 +276,7 @@ export default function InventoryPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-500">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
                   Total Units
                 </CardTitle>
               </CardHeader>
@@ -302,7 +301,7 @@ export default function InventoryPage() {
           <>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-500">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
                   Total Cylinders
                 </CardTitle>
               </CardHeader>
@@ -312,7 +311,7 @@ export default function InventoryPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-500">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
                   Hospitals with Oxygen
                 </CardTitle>
               </CardHeader>
@@ -324,7 +323,7 @@ export default function InventoryPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-500">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
                   Fill Status
                 </CardTitle>
               </CardHeader>
@@ -456,7 +455,7 @@ export default function InventoryPage() {
                     <TableRow>
                       <TableCell
                         colSpan={6}
-                        className="text-center py-8 text-gray-500"
+                        className="text-center py-8 text-muted-foreground"
                       >
                         No blood inventory found.
                       </TableCell>
@@ -537,7 +536,7 @@ export default function InventoryPage() {
                     <TableRow>
                       <TableCell
                         colSpan={5}
-                        className="text-center py-8 text-gray-500"
+                        className="text-center py-8 text-muted-foreground"
                       >
                         No oxygen inventory found.
                       </TableCell>
@@ -567,7 +566,7 @@ export default function InventoryPage() {
                   onChange={(e) =>
                     setBloodForm({ ...bloodForm, hospitalId: e.target.value })
                   }
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-100 disabled:text-gray-600"
+                  className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-muted disabled:text-muted-foreground"
                   disabled={!!editingBlood || !isSuperadmin}
                   required
                 >
@@ -579,7 +578,7 @@ export default function InventoryPage() {
                   ))}
                 </select>
                 {!isSuperadmin && (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     You can only add stock to your own hospital.
                   </p>
                 )}
@@ -591,7 +590,7 @@ export default function InventoryPage() {
                   onChange={(e) =>
                     setBloodForm({ ...bloodForm, bloodGroup: e.target.value })
                   }
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
                   disabled={!!editingBlood}
                   required
                 >
@@ -646,7 +645,7 @@ export default function InventoryPage() {
                   onChange={(e) =>
                     setOxygenForm({ ...oxygenForm, hospitalId: e.target.value })
                   }
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-100 disabled:text-gray-600"
+                  className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-muted disabled:text-muted-foreground"
                   disabled={!!editingOxygen || !isSuperadmin}
                   required
                 >
@@ -658,7 +657,7 @@ export default function InventoryPage() {
                   ))}
                 </select>
                 {!isSuperadmin && (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     You can only add stock to your own hospital.
                   </p>
                 )}
@@ -690,7 +689,7 @@ export default function InventoryPage() {
                         | "empty",
                     })
                   }
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
                 >
                   <option value="full">Full</option>
                   <option value="partial">Partial</option>

@@ -8,7 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Droplet } from 'lucide-react';
+import { Droplet, CalendarCheck } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
+import { Loading, EmptyState } from '@/components/ui/states';
 
 interface Appt {
   _id: string;
@@ -32,7 +34,7 @@ function badge(s: string) {
     scheduled: 'bg-blue-100 text-blue-700',
     completed: 'bg-emerald-100 text-emerald-700',
     cancelled: 'bg-red-100 text-red-700',
-    missed: 'bg-gray-200 text-gray-700',
+    missed: 'bg-gray-200 text-foreground',
   };
   return <Badge className={map[s] || ''}>{LABEL[s] || s}</Badge>;
 }
@@ -68,10 +70,7 @@ export default function AppointmentsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-800">Donation Appointments</h1>
-        <p className="text-sm text-gray-400">Accept and manage donor appointment requests</p>
-      </div>
+      <PageHeader title="Donation Appointments" subtitle="Accept and manage donor appointment requests" />
 
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((s) => (
@@ -79,7 +78,7 @@ export default function AppointmentsPage() {
             key={s || 'all'}
             onClick={() => setStatus(s)}
             className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-              status === s ? 'bg-primary text-white border-primary' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              status === s ? 'bg-primary text-white border-primary' : 'bg-card text-muted-foreground border-border hover:bg-muted/50'
             }`}
           >
             {s === '' ? 'All' : (LABEL[s] || s)}
@@ -103,15 +102,15 @@ export default function AppointmentsPage() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-8 text-gray-400">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7}><Loading /></TableCell></TableRow>
               ) : appts.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center py-8 text-gray-400">No appointments{status ? ` (${LABEL[status] || status})` : ''}.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7}><EmptyState icon={CalendarCheck} title={`No appointments${status ? ` (${LABEL[status] || status})` : ''}`} hint="Donor appointment requests will appear here to accept." /></TableCell></TableRow>
               ) : (
                 appts.map((a) => (
                   <TableRow key={a._id}>
                     <TableCell>
                       <div className="font-medium">{a.donorId?.name || '—'}</div>
-                      <div className="text-xs text-gray-400">{a.donorId?.phone}</div>
+                      <div className="text-xs text-muted-foreground">{a.donorId?.phone}</div>
                     </TableCell>
                     <TableCell>
                       <span className="flex items-center gap-1"><Droplet className="h-4 w-4 text-red-500" /> {a.donorId?.bloodGroup}</span>
@@ -119,7 +118,7 @@ export default function AppointmentsPage() {
                     <TableCell className="text-sm">{a.hospitalId?.name || '—'}</TableCell>
                     <TableCell className="text-sm">{new Date(a.appointmentDate).toLocaleString()}</TableCell>
                     <TableCell>{badge(a.status)}</TableCell>
-                    <TableCell className="text-sm text-gray-600 max-w-[200px]">{a.notes || <span className="text-gray-300">—</span>}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-[200px]">{a.notes || <span className="text-muted-foreground/60">—</span>}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex flex-wrap gap-2 justify-end">
                         {(NEXT[a.status] || []).map((n) => (

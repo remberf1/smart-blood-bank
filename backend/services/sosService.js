@@ -3,6 +3,7 @@ const twilio = require('twilio');
 const Donor = require('../models/Donor');
 const SOSRequest = require('../models/SOSRequest');
 const { normalizePhone } = require('../utils/phone');
+const { getCompatibleDonors } = require('../utils/bloodCompatibility');
 
 const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -24,29 +25,45 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
   console.log(`🚨 SOS TRIGGERED: ${bloodGroup} needed at (${userLat}, ${userLon})`);
   console.log('Using Twilio from number:', process.env.TWILIO_WHATSAPP_NUMBER);
 
+  // Alert every donor whose blood is COMPATIBLE with the patient's need
+  // (e.g. an A+ patient can receive from A+, A-, O+, O-), not just exact match.
+  const compatibleGroups = getCompatibleDonors(bloodGroup);
   const donors = await Donor.find({
-    bloodGroup: bloodGroup,
+    bloodGroup: { $in: compatibleGroups.length ? compatibleGroups : [bloodGroup] },
     eligibilityStatus: 'eligible',
     sosOptIn: true, // respect donors who opted out of SOS alerts
   });
 
-  const donorsWithDistance = donors.map(donor => {
-    const distance = haversineDistance(
-      userLat, userLon,
-      donor.location.coordinates[1],
-      donor.location.coordinates[0]
-    );
-    return { ...donor.toObject(), distance };
-  }).filter(d => d.distance <= radiusKm);
+  const withDistance = donors
+    .map(donor => ({
+      ...donor.toObject(),
+      distance: haversineDistance(
+        userLat, userLon,
+        donor.location.coordinates[1],
+        donor.location.coordinates[0]
+      ),
+    }))
+    .sort((a, b) => a.distance - b.distance);
 
-  console.log(`📍 Found ${donorsWithDistance.length} eligible donors within ${radiusKm}km`);
+  // Auto-widen the search radius until donors are found (emergency), up to a cap.
+  const tiers = Array.from(new Set([radiusKm, 50, 150].filter((r) => r >= radiusKm)))
+    .sort((a, b) => a - b);
+  let effectiveRadius = radiusKm;
+  let donorsWithDistance = [];
+  for (const r of tiers) {
+    effectiveRadius = r;
+    donorsWithDistance = withDistance.filter((d) => d.distance <= r);
+    if (donorsWithDistance.length > 0) break;
+  }
+
+  console.log(`📍 Found ${donorsWithDistance.length} eligible donors within ${effectiveRadius}km`);
 
   // Persist the SOS event up front so alert outcomes can be recorded.
   const sos = new SOSRequest({
     bloodGroup,
     userLocation: { lat: userLat, lon: userLon },
     userPhone: normalizePhone(userPhone),
-    radiusKm,
+    radiusKm: effectiveRadius,
     status: 'pending',
   });
 
@@ -60,7 +77,7 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
       console.log(`📨 Sending SOS to: ${toNumber} from: ${fromNumber}`);
 
       const message = await client.messages.create({
-        body: `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`,
+        body: `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`,
         from: fromNumber,
         to: toNumber
       });
@@ -88,7 +105,8 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
     sosId: sos._id,
     bloodGroup,
     userLocation: { lat: userLat, lon: userLon },
-    radiusKm,
+    radiusKm: effectiveRadius,
+    widened: effectiveRadius > radiusKm,
     donorsFound: donorsWithDistance.length,
     donorsAlerted: alertedCount
   };
@@ -119,8 +137,21 @@ async function processDonorResponse(donorPhone, response) {
     );
     if (entry) entry.status = responseValue === 'yes' ? 'accepted' : 'declined';
     await sos.save();
-    // TODO: on 'yes', notify the requesting hospital (hospitalNotified) once
-    // hospital selection for an SOS is wired in.
+
+    // Close the loop: when a donor accepts, notify the person who raised the
+    // SOS with the donor's contact so they can coordinate immediately.
+    if (responseValue === 'yes' && sos.userPhone) {
+      try {
+        await client.messages.create({
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: `whatsapp:${sos.userPhone}`,
+          body: `🎉 *A donor is available!*\n\n*${donor.name}* (${donor.bloodGroup}) has agreed to donate for your *${sos.bloodGroup}* request.\n\n📞 Contact them: ${donor.phone}\n\nPlease coordinate the donation at your nearest hospital.`,
+        });
+        console.log(`📣 Notified SOS requester ${sos.userPhone} of donor ${donor.name}`);
+      } catch (err) {
+        console.error('Failed to notify SOS requester:', err.message);
+      }
+    }
   }
 
   if (responseValue === 'yes') {

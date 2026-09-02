@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import apiClient from '../../api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Droplet, Clock, CheckCircle2, Trash2, HeartPulse, Users } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 type Summary = {
   scope: string;
@@ -29,11 +30,11 @@ function Bar({ label, value, max, tone = 'primary' }: { label: string; value: nu
     tone === 'danger' ? 'bg-red-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'green' ? 'bg-emerald-500' : 'bg-primary';
   return (
     <div className="flex items-center gap-3">
-      <span className="w-12 text-sm font-medium text-gray-600 shrink-0">{label}</span>
-      <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden">
+      <span className="w-12 text-sm font-medium text-muted-foreground shrink-0">{label}</span>
+      <div className="flex-1 h-6 bg-muted rounded overflow-hidden">
         <div className={`h-full ${color} rounded transition-all`} style={{ width: `${width}%` }} />
       </div>
-      <span className="w-10 text-sm text-gray-700 text-right shrink-0">{value}</span>
+      <span className="w-10 text-sm text-foreground text-right shrink-0">{value}</span>
     </div>
   );
 }
@@ -46,9 +47,9 @@ function Kpi({ icon: Icon, label, value, sub, tone = 'primary' }: any) {
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-sm text-gray-500">{label}</p>
-            <p className="text-2xl font-bold text-gray-800 mt-1">{value}</p>
-            {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+            <p className="text-sm text-muted-foreground">{label}</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
+            {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
           </div>
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}>
             <Icon className="h-5 w-5" />
@@ -106,23 +107,21 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Analytics</h1>
-          <p className="text-sm text-gray-400">
-            {summary.scope === 'network' ? 'Network-wide' : 'Your hospital'} · last {days} days
-          </p>
-        </div>
-        <select
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          className="border rounded-lg px-3 py-2 text-sm bg-white"
-        >
-          <option value={7}>Last 7 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-        </select>
-      </div>
+      <PageHeader
+        title="Analytics"
+        subtitle={`${summary.scope === 'network' ? 'Network-wide' : 'Your hospital'} · last ${days} days`}
+        action={
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className="border border-input rounded-lg px-3 py-2 text-sm bg-card"
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+        }
+      />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -141,7 +140,7 @@ export default function AnalyticsPage() {
             <CardTitle>Current stock by blood group</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {summary.stockByGroup.length === 0 && <p className="text-sm text-gray-400">No stock recorded.</p>}
+            {summary.stockByGroup.length === 0 && <p className="text-sm text-muted-foreground">No stock recorded.</p>}
             {summary.stockByGroup.map((s) => (
               <Bar key={s.bloodGroup} label={s.bloodGroup} value={s.units} max={stockMax} />
             ))}
@@ -153,7 +152,7 @@ export default function AnalyticsPage() {
             <CardTitle>Donations by group · {days}d</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {(donations?.byGroup.length ?? 0) === 0 && <p className="text-sm text-gray-400">No donations in this period.</p>}
+            {(donations?.byGroup.length ?? 0) === 0 && <p className="text-sm text-muted-foreground">No donations in this period.</p>}
             {donations?.byGroup.map((g) => (
               <Bar key={g.bloodGroup} label={g.bloodGroup} value={g.units} max={donMax} tone="green" />
             ))}
@@ -165,7 +164,7 @@ export default function AnalyticsPage() {
             <CardTitle>Requests by status · {days}d</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {statusEntries.length === 0 && <p className="text-sm text-gray-400">No requests in this period.</p>}
+            {statusEntries.length === 0 && <p className="text-sm text-muted-foreground">No requests in this period.</p>}
             {statusEntries.map(([status, count]) => (
               <Bar
                 key={status}

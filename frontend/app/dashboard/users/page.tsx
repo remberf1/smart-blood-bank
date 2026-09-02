@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/ui/page-header';
 import { Plus, ShieldAlert } from 'lucide-react';
 
 interface Hospital { _id: string; name: string }
@@ -119,7 +120,7 @@ export default function UsersPage() {
   if (!isSuperadmin) {
     return (
       <Card>
-        <CardContent className="p-8 flex items-center gap-3 text-gray-600">
+        <CardContent className="p-8 flex items-center gap-3 text-muted-foreground">
           <ShieldAlert className="h-5 w-5 text-amber-500" />
           Only a super admin can manage users.
         </CardContent>
@@ -128,19 +129,15 @@ export default function UsersPage() {
   }
 
   const roleColor = (r: string) =>
-    r === 'superadmin' ? 'bg-purple-100 text-purple-700' : r === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700';
+    r === 'superadmin' ? 'bg-purple-100 text-purple-700' : r === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-muted text-foreground';
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Users</h1>
-          <p className="text-sm text-gray-400">Create and assign hospital admins &amp; staff</p>
-        </div>
-        <Button onClick={openAdd}>
-          <Plus className="h-4 w-4 mr-2" /> Add User
-        </Button>
-      </div>
+      <PageHeader
+        title="Users"
+        subtitle="Create and assign hospital admins & staff"
+        action={<Button onClick={openAdd}><Plus className="h-4 w-4 mr-2" /> Add User</Button>}
+      />
 
       <Card>
         <CardContent className="p-0">
@@ -159,11 +156,11 @@ export default function UsersPage() {
               {users.map((u) => (
                 <TableRow key={u._id}>
                   <TableCell className="font-medium">{u.name}</TableCell>
-                  <TableCell className="text-gray-500">{u.email}</TableCell>
+                  <TableCell className="text-muted-foreground">{u.email}</TableCell>
                   <TableCell>
                     <Badge className={roleColor(u.role)}>{u.role}</Badge>
                   </TableCell>
-                  <TableCell>{u.hospitalId?.name || <span className="text-gray-400">—</span>}</TableCell>
+                  <TableCell>{u.hospitalId?.name || <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell>
                     <Badge className={u.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}>
                       {u.isActive ? 'Active' : 'Inactive'}
@@ -184,7 +181,7 @@ export default function UsersPage() {
               ))}
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-gray-400 py-8">No users yet.</TableCell>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No users yet.</TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -212,7 +209,7 @@ export default function UsersPage() {
                   <div>
                     <Label>Password</Label>
                     <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} />
-                    <p className="text-xs text-gray-400 mt-1">At least 8 characters.</p>
+                    <p className="text-xs text-muted-foreground mt-1">At least 8 characters.</p>
                   </div>
                 </>
               )}
@@ -221,7 +218,7 @@ export default function UsersPage() {
                 <select
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value as User['role'] })}
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-100 disabled:text-gray-600"
+                  className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-muted disabled:text-muted-foreground"
                   disabled={!!editing && editing._id === user?.id}
                 >
                   {ROLES.map((r) => (
@@ -229,7 +226,7 @@ export default function UsersPage() {
                   ))}
                 </select>
                 {!!editing && editing._id === user?.id && (
-                  <p className="text-xs text-gray-500 mt-1">You can&apos;t change your own role.</p>
+                  <p className="text-xs text-muted-foreground mt-1">You can&apos;t change your own role.</p>
                 )}
               </div>
               {form.role !== 'superadmin' && (
@@ -238,7 +235,7 @@ export default function UsersPage() {
                   <select
                     value={form.hospitalId}
                     onChange={(e) => setForm({ ...form, hospitalId: e.target.value })}
-                    className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
                     required
                   >
                     <option value="">Select hospital</option>
