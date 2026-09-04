@@ -8,6 +8,7 @@ const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = 
 const { triggerSOS, processDonorResponse } = require('../services/sosService');
 const { formatNigerianPhone } = require('../utils/phone');
 const { evaluateDonorEligibility } = require('../utils/eligibility');
+const { getCompatibleDonors, compatibilityIndex } = require('../utils/bloodCompatibility');
 
 const MessagingResponse = twilio.twiml.MessagingResponse;
 
@@ -87,6 +88,7 @@ function formatBloodResults(bloodGroup, rankedHospitals, lat, lon) {
   }
   
   const hasLoc = lat != null && lon != null;
+  const anyCompatible = rankedHospitals.some((h) => h.isExact === false);
   let message = `🩸 *${bloodGroup} BLOOD AVAILABLE*\n\n`;
   if (hasLoc) message += `📍 Your location: ${lat.toFixed(4)}, ${lon.toFixed(4)}\n\n`;
   message += `*TOP RECOMMENDATIONS:*\n\n`;
@@ -95,10 +97,18 @@ function formatBloodResults(bloodGroup, rankedHospitals, lat, lon) {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
     message += `${medal} *${h.name}*\n`;
     if (h.distance != null) message += `   📍 ${h.distance}km away\n`;
-    message += `   🩸 ${h.unitsAvailable} units available\n`;
+    // Show the actual group; flag when it's a compatible substitute, not exact.
+    if (h.group && h.isExact === false) {
+      message += `   🩸 ${h.unitsAvailable} units of *${h.group}* (compatible)\n`;
+    } else {
+      message += `   🩸 ${h.unitsAvailable} units available\n`;
+    }
     message += `   📞 ${h.contactPhone || 'Call hospital'}\n\n`;
   });
 
+  if (anyCompatible) {
+    message += `ℹ️ Groups marked *(compatible)* are safe substitutes for ${bloodGroup}. Final suitability is confirmed by the hospital.\n\n`;
+  }
   if (!hasLoc) message += `💡 Share your location (📎 → Location) to see the *nearest* hospitals first.\n\n`;
   message += `_Reply 1-8 for another blood type, or MENU to start over._`;
 
@@ -212,20 +222,25 @@ router.post('/webhook', validateTwilio, async (req, res) => {
     }
 
     if (bloodGroup) {
+      // Compatibility-aware: also surface stock the patient can safely receive
+      // (e.g. A+ can take A+, A-, O+, O-), not just the exact group.
+      const compatibleGroups = getCompatibleDonors(bloodGroup);
+      const searchGroups = compatibleGroups.length ? compatibleGroups : [bloodGroup];
       const hospitalsWithStock = await Inventory.aggregate([
-        { $match: { resourceType: 'blood', bloodGroup: bloodGroup, units: { $gt: 0 } } },
+        { $match: { resourceType: 'blood', bloodGroup: { $in: searchGroups }, units: { $gt: 0 } } },
         { $lookup: { from: 'hospitals', localField: 'hospitalId', foreignField: '_id', as: 'hospital' } },
         { $unwind: '$hospital' }
       ]);
 
       if (hospitalsWithStock.length === 0) {
-        twiml.message(`⚠️ No ${bloodGroup} blood available.\n\nType 1 for another blood type, SOS for emergency alert, or MENU for main menu.`);
+        twiml.message(`⚠️ No ${bloodGroup} (or compatible) blood available.\n\nType 1 for another blood type, SOS for emergency alert, or MENU for main menu.`);
       } else {
         const hasLoc = session.hasLocation;
         const maxUnits = Math.max(...hospitalsWithStock.map(h => h.units));
         const scored = hospitalsWithStock.map(item => {
           const recencyScore = getRecencyScore(item.lastUpdatedAt);
           const stockScore = getStockScore(item.units, maxUnits);
+          const rank = compatibilityIndex(bloodGroup, item.bloodGroup); // 0 = exact/most preferred
 
           let distance = null;
           let wps;
@@ -247,11 +262,18 @@ router.post('/webhook', validateTwilio, async (req, res) => {
             contactPhone: item.hospital.contactPhone,
             distance: distance != null ? distance.toFixed(1) : null,
             unitsAvailable: item.units,
+            group: item.bloodGroup,
+            isExact: item.bloodGroup === bloodGroup,
+            compatibilityRank: rank,
             wps: wps
           };
         });
 
-        const ranked = scored.sort((a, b) => b.wps - a.wps);
+        // Prefer the exact/same-ABO group first (conserves scarce universal
+        // stock and reduces cross-type risk); rank by WPS within each tier.
+        const ranked = scored.sort(
+          (a, b) => a.compatibilityRank - b.compatibilityRank || b.wps - a.wps
+        );
         const reply = formatBloodResults(bloodGroup, ranked, hasLoc ? session.lat : null, hasLoc ? session.lon : null);
         session.step = null;
         twiml.message(reply);

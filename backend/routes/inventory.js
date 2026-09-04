@@ -6,6 +6,7 @@ const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = 
 const { auth, isAdmin } = require('../middleware/auth');
 const { canAccessHospital, allowRoles } = require('../middleware/roles');
 const { addBloodUnits, removeBloodUnits, refreshBloodInventory, expireDueBatches } = require('../services/inventoryService');
+const { getCompatibleDonors, compatibilityIndex } = require('../utils/bloodCompatibility');
 
 // POST - Add inventory
 router.post('/',auth,async (req, res) => {
@@ -56,15 +57,43 @@ router.get('/blood', async (req, res) => {
   }
 });
 
-// GET - Blood by group
+// GET - Blood by group.
+// Compatibility-aware by default: a request for group X also surfaces stock the
+// patient can safely receive (e.g. A+ can take A+, A-, O+, O-), ordered so the
+// exact/same-ABO group comes first and universal (O-) last. Each row is tagged
+// with `matchType` ('exact'|'compatible') and a preference rank so callers can
+// present substitutes clearly. Pass ?exact=true for the old exact-match behavior.
 router.get('/blood/:bloodGroup', async (req, res) => {
   try {
-    const inventory = await Inventory.find({ 
-      resourceType: 'blood', 
-      bloodGroup: req.params.bloodGroup,
-      units: { $gt: 0 }
-    }).populate('hospitalId', 'name address location contactPhone');
-    res.json(inventory);
+    const requested = req.params.bloodGroup;
+    const exactOnly = req.query.exact === 'true';
+    const groups = exactOnly ? [requested] : getCompatibleDonors(requested);
+
+    // Unknown/invalid group: fall back to an exact lookup so we never 500.
+    const search = groups.length ? groups : [requested];
+
+    const inventory = await Inventory.find({
+      resourceType: 'blood',
+      bloodGroup: { $in: search },
+      units: { $gt: 0 },
+    })
+      .populate('hospitalId', 'name address location contactPhone')
+      .lean();
+
+    const annotated = inventory
+      .map((row) => ({
+        ...row,
+        requestedGroup: requested,
+        matchType: row.bloodGroup === requested ? 'exact' : 'compatible',
+        compatibilityRank: compatibilityIndex(requested, row.bloodGroup),
+      }))
+      // exact first, then by compatibility preference, then more units first
+      .sort(
+        (a, b) =>
+          a.compatibilityRank - b.compatibilityRank || b.units - a.units
+      );
+
+    res.json(annotated);
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
   }

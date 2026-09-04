@@ -1,6 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { getCompatibleDonors, isCompatible } = require('../utils/bloodCompatibility');
+const {
+  getCompatibleDonors,
+  isCompatible,
+  compatibilityIndex,
+  compatibilityScore,
+} = require('../utils/bloodCompatibility');
 const { selectCompatible } = require('../services/inventoryService');
 
 const day = (n) => new Date(Date.now() + n * 24 * 3600 * 1000);
@@ -59,4 +64,29 @@ test('selectCompatible reports shortfall when compatible stock is insufficient',
   const r = selectCompatible(batches, 2, getCompatibleDonors('A+'));
   assert.strictEqual(r.allocated, 0);
   assert.strictEqual(r.shortfall, 2);
+});
+
+test('compatibilityIndex ranks exact group first, universal last, -1 if incompatible', () => {
+  assert.strictEqual(compatibilityIndex('A+', 'A+'), 0); // exact = most preferred
+  assert.strictEqual(compatibilityIndex('A+', 'O-'), 3); // universal = least preferred
+  assert.ok(compatibilityIndex('A+', 'A-') < compatibilityIndex('A+', 'O+')); // same-ABO before O
+  assert.strictEqual(compatibilityIndex('A+', 'B+'), -1); // incompatible
+});
+
+test('compatibilityScore is 1 for exact, decreases for substitutes, 0 if incompatible', () => {
+  assert.strictEqual(compatibilityScore('A+', 'A+'), 1);
+  assert.strictEqual(compatibilityScore('A+', 'O-'), 0); // last in a 4-long list
+  assert.ok(compatibilityScore('A+', 'A-') > compatibilityScore('A+', 'O+'));
+  assert.strictEqual(compatibilityScore('A+', 'B+'), 0); // incompatible
+  assert.strictEqual(compatibilityScore('O-', 'O-'), 1); // single-item list still scores 1
+});
+
+test('search ranking: exact group outranks a compatible substitute regardless of stock', () => {
+  // Mirrors the whatsapp search sort key: compatibilityRank asc, then wps desc.
+  const rows = [
+    { group: 'O-', wps: 0.99, compatibilityRank: compatibilityIndex('A+', 'O-') },
+    { group: 'A+', wps: 0.10, compatibilityRank: compatibilityIndex('A+', 'A+') },
+  ];
+  rows.sort((a, b) => a.compatibilityRank - b.compatibilityRank || b.wps - a.wps);
+  assert.strictEqual(rows[0].group, 'A+'); // exact wins even with far lower WPS
 });

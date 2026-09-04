@@ -25,4 +25,27 @@ function isCompatible(recipientGroup, donorGroup) {
   return getCompatibleDonors(recipientGroup).includes(donorGroup);
 }
 
-module.exports = { COMPATIBILITY, getCompatibleDonors, isCompatible };
+// Preference rank of a donor group for a recipient: 0 = most preferred
+// (exact/same-ABO first, universal O- last), matching the COMPATIBILITY order.
+// Returns -1 when the group is not compatible at all.
+function compatibilityIndex(recipientGroup, donorGroup) {
+  return getCompatibleDonors(recipientGroup).indexOf(donorGroup);
+}
+
+// Normalized preference score in [0,1] for ranking: 1 = exact/most preferred,
+// decreasing for less-preferred (but still valid) substitutes; 0 if incompatible.
+function compatibilityScore(recipientGroup, donorGroup) {
+  const list = getCompatibleDonors(recipientGroup);
+  const idx = list.indexOf(donorGroup);
+  if (idx === -1) return 0;
+  if (list.length === 1) return 1;
+  return 1 - idx / (list.length - 1);
+}
+
+module.exports = {
+  COMPATIBILITY,
+  getCompatibleDonors,
+  isCompatible,
+  compatibilityIndex,
+  compatibilityScore,
+};
