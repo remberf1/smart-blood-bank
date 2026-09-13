@@ -58,6 +58,11 @@ export default function DonorLogin() {
                 {loading ? 'Logging in…' : 'Login'}
               </Button>
             </form>
+            <div className="text-center mt-3">
+              <Link href="/donor/forgot-password" className="text-sm text-primary hover:underline">
+                Forgot password?
+              </Link>
+            </div>
             <p className="text-sm text-gray-500 text-center mt-4">
               New donor?{' '}
               <Link href="/donor/register" className="text-red-600 font-medium hover:underline">Create an account</Link>

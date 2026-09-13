@@ -10,6 +10,15 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+const forgotPasswordSchema = z.object({
+  email: z.email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Reset token is required'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
 const registerUserSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   email: z.email(),
@@ -69,6 +78,8 @@ const resourceRequestSchema = z.object({
 
 module.exports = {
   loginSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
   registerUserSchema,
   updateUserSchema,
   donorRegisterSchema,

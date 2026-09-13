@@ -30,18 +30,22 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
 import { Loading, EmptyState } from '@/components/ui/states';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   Users,
-  Droplet, 
-  Calendar, 
-  Phone, 
-  Mail, 
+  Droplet,
+  Calendar,
+  Phone,
+  Mail,
   Search,
   QrCode,
   Clock,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  HeartHandshake,
 } from 'lucide-react';
+
+interface Hospital { _id: string; name: string }
 
 interface Donor {
   _id: string;
@@ -67,6 +71,13 @@ export default function DonorsPage() {
   const [selectedDonor, setSelectedDonor] = useState<Donor | null>(null);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
+
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === 'superadmin';
+  const [recordDonor, setRecordDonor] = useState<Donor | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [recordHospitalId, setRecordHospitalId] = useState('');
 
   const fetchDonors = async (pageArg: number, search: string) => {
     setLoading(true);
@@ -114,6 +125,43 @@ export default function DonorsPage() {
     setSelectedDonor(donor);
     await fetchQrCode(donor._id);
     setQrDialogOpen(true);
+  };
+
+  // Superadmin has no home hospital, so they must choose where the donation is
+  // recorded; load the hospital list the first time the dialog is opened.
+  const openRecord = async (donor: Donor) => {
+    setRecordDonor(donor);
+    setRecordHospitalId('');
+    if (isSuperadmin && hospitals.length === 0) {
+      try {
+        const res = await apiClient.get('/hospitals');
+        setHospitals(res.data);
+      } catch {
+        toast.error('Could not load hospitals');
+      }
+    }
+  };
+
+  const handleRecordDonation = async () => {
+    if (!recordDonor) return;
+    if (isSuperadmin && !recordHospitalId) {
+      toast.error('Select the hospital where the donation happened.');
+      return;
+    }
+    setRecording(true);
+    try {
+      const res = await apiClient.post(`/donors/${recordDonor._id}/record-donation`, {
+        hospitalId: isSuperadmin ? recordHospitalId : undefined,
+      });
+      const { bloodGroup, units } = res.data.inventory;
+      toast.success(`Donation recorded — ${bloodGroup} stock is now ${units} unit${units === 1 ? '' : 's'}. Donor deferred 90 days.`);
+      setRecordDonor(null);
+      fetchDonors(page, debouncedSearch); // refresh eligibility badges
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to record donation');
+    } finally {
+      setRecording(false);
+    }
   };
 
   const getEligibilityBadge = (status: string) => {
@@ -271,15 +319,32 @@ export default function DonorsPage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleViewQr(donor)}
-                            className="h-8 px-3 text-primary hover:text-primary hover:bg-primary/10"
-                          >
-                            <QrCode className="h-4 w-4 mr-1" />
-                            QR Code
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openRecord(donor)}
+                              disabled={donor.eligibilityStatus !== 'eligible'}
+                              title={
+                                donor.eligibilityStatus !== 'eligible'
+                                  ? `Not eligible (${donor.eligibilityStatus})`
+                                  : 'Record a donation'
+                              }
+                              className="h-8 px-3 text-emerald-700 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+                            >
+                              <HeartHandshake className="h-4 w-4 mr-1" />
+                              Record
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleViewQr(donor)}
+                              className="h-8 px-3 text-primary hover:text-primary hover:bg-primary/10"
+                            >
+                              <QrCode className="h-4 w-4 mr-1" />
+                              QR
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -317,6 +382,58 @@ export default function DonorsPage() {
           </div>
         </div>
       )}
+
+      {/* Record Donation Dialog */}
+      <Dialog open={!!recordDonor} onOpenChange={(o) => !o && setRecordDonor(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HeartHandshake className="h-5 w-5 text-emerald-600" /> Record donation
+            </DialogTitle>
+            <DialogDescription>
+              This logs the donation, adds one unit to inventory, and defers the donor for 90 days.
+            </DialogDescription>
+          </DialogHeader>
+          {recordDonor && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg border border-border p-3 text-sm space-y-1">
+                <p><strong>Donor:</strong> {recordDonor.name}</p>
+                <p className="flex items-center gap-2">
+                  <strong>Blood group:</strong>
+                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">{recordDonor.bloodGroup}</Badge>
+                </p>
+                <p><strong>Phone:</strong> {recordDonor.phone}</p>
+              </div>
+              {isSuperadmin && (
+                <div>
+                  <label className="text-sm font-medium text-foreground">Record at hospital</label>
+                  <select
+                    value={recordHospitalId}
+                    onChange={(e) => setRecordHospitalId(e.target.value)}
+                    className="mt-1 w-full border border-input rounded-lg px-3 py-2 text-sm bg-card"
+                  >
+                    <option value="">Select hospital…</option>
+                    {hospitals.map((h) => (
+                      <option key={h._id} value={h._id}>{h.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    The unit will be added to this hospital&apos;s stock.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecordDonor(null)} disabled={recording}>
+              Cancel
+            </Button>
+            <Button onClick={handleRecordDonation} disabled={recording} className="bg-emerald-600 hover:bg-emerald-700">
+              {recording ? 'Recording…' : 'Confirm donation'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* QR Code Dialog */}
       <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>

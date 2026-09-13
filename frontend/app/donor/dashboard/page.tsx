@@ -9,8 +9,11 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Droplet, LogOut, CalendarPlus, CalendarClock, User, Phone, Mail,
-  ShieldCheck, Clock, MapPin,
+  ShieldCheck, Clock, MapPin, Pencil, KeyRound,
 } from 'lucide-react';
 
 interface DonorProfile {
@@ -43,6 +46,54 @@ export default function DonorDashboard() {
   const [booking, setBooking] = useState(false);
   const [formData, setFormData] = useState({ hospitalId: '', appointmentDate: '', notes: '' });
   const router = useRouter();
+
+  // Profile editing + password change
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '', sosOptIn: true });
+  const [pwOpen, setPwOpen] = useState(false);
+  const [savingPw, setSavingPw] = useState(false);
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+
+  const openProfile = () => {
+    if (!donor) return;
+    setProfileForm({ name: donor.name, email: donor.email || '', phone: donor.phone, sosOptIn: donor.sosOptIn });
+    setProfileOpen(true);
+  };
+
+  const saveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      const res = await apiClient.put('/donor/auth/profile', profileForm);
+      const d = res.data.donor;
+      setDonor((prev) => (prev ? { ...prev, name: d.name, email: d.email, phone: d.phone, sosOptIn: d.sosOptIn } : prev));
+      toast.success('Profile updated');
+      setProfileOpen(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to update profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const savePassword = async () => {
+    if (pwForm.newPassword.length < 8) { toast.error('New password must be at least 8 characters.'); return; }
+    if (pwForm.newPassword !== pwForm.confirm) { toast.error('Passwords do not match.'); return; }
+    setSavingPw(true);
+    try {
+      await apiClient.post('/donor/auth/change-password', {
+        currentPassword: pwForm.currentPassword,
+        newPassword: pwForm.newPassword,
+      });
+      toast.success('Password changed');
+      setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
+      setPwOpen(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to change password');
+    } finally {
+      setSavingPw(false);
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('donorToken');
@@ -174,6 +225,14 @@ export default function DonorDashboard() {
               <Info icon={CalendarClock} label="Last donation" value={lastDonation} />
               <Info icon={ShieldCheck} label="SOS alerts" value={donor.sosOptIn ? 'Opted in' : 'Off'} />
             </div>
+            <div className="flex flex-wrap gap-2 mt-5 pt-4 border-t border-border">
+              <Button variant="outline" size="sm" onClick={openProfile}>
+                <Pencil className="h-4 w-4 mr-1" /> Edit profile
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setPwOpen(true)}>
+                <KeyRound className="h-4 w-4 mr-1" /> Change password
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -268,6 +327,75 @@ export default function DonorDashboard() {
           </Card>
         )}
       </main>
+
+      {/* Edit profile dialog */}
+      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-red-500" /> Edit profile
+            </DialogTitle>
+            <DialogDescription>Update your contact details and alert preferences.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Full name</Label>
+              <Input value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} />
+            </div>
+            <div>
+              <Label>Email</Label>
+              <Input type="email" value={profileForm.email} onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })} />
+            </div>
+            <div>
+              <Label>Phone</Label>
+              <Input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="08012345678" />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={profileForm.sosOptIn}
+                onChange={(e) => setProfileForm({ ...profileForm, sosOptIn: e.target.checked })}
+                className="h-4 w-4 accent-red-600"
+              />
+              Receive urgent SOS donation alerts near me
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProfileOpen(false)} disabled={savingProfile}>Cancel</Button>
+            <Button onClick={saveProfile} disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save changes'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Change password dialog */}
+      <Dialog open={pwOpen} onOpenChange={setPwOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-red-500" /> Change password
+            </DialogTitle>
+            <DialogDescription>Enter your current password and choose a new one.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Current password</Label>
+              <Input type="password" value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} />
+            </div>
+            <div>
+              <Label>New password</Label>
+              <Input type="password" value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} placeholder="At least 8 characters" />
+            </div>
+            <div>
+              <Label>Confirm new password</Label>
+              <Input type="password" value={pwForm.confirm} onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPwOpen(false)} disabled={savingPw}>Cancel</Button>
+            <Button onClick={savePassword} disabled={savingPw}>{savingPw ? 'Saving…' : 'Change password'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -13,9 +13,11 @@ import {
   Menu,
   ArrowRightLeft,
   BarChart3,
+  TrendingUp,
   UserCog,
   HeartPulse,
   CalendarCheck,
+  Siren,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -27,8 +29,10 @@ const navItems = [
   { name: 'Appointments', href: '/dashboard/appointments', icon: CalendarCheck },
   { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2 },
   { name: 'Patient Requests', href: '/dashboard/patient-requests', icon: HeartPulse },
+  { name: 'SOS', href: '/dashboard/sos', icon: Siren, adminOnly: true },
    { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+  { name: 'Forecast', href: '/dashboard/forecast', icon: TrendingUp },
   { name: 'Users', href: '/dashboard/users', icon: UserCog, superadminOnly: true },
 ];
 
@@ -103,6 +107,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="space-y-0.5">
               {navItems
                 .filter((item) => !(item as any).superadminOnly || user.role === 'superadmin')
+                .filter((item) => !(item as any).adminOnly || user.role === 'admin' || user.role === 'superadmin')
                 .map((item) => {
                   const isActive = pathname === item.href;
                   const Icon = item.icon;

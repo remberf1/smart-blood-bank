@@ -8,14 +8,15 @@ import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Droplet, CalendarCheck } from 'lucide-react';
+import { Droplet, CalendarCheck, HeartHandshake } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Loading, EmptyState } from '@/components/ui/states';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface Appt {
   _id: string;
-  donorId?: { name: string; phone: string; bloodGroup: string; eligibilityStatus: string } | null;
-  hospitalId?: { name: string } | null;
+  donorId?: { _id: string; name: string; phone: string; bloodGroup: string; eligibilityStatus: string } | null;
+  hospitalId?: { _id: string; name: string } | null;
   appointmentDate: string;
   status: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'missed';
   notes?: string;
@@ -43,6 +44,9 @@ export default function AppointmentsPage() {
   const [appts, setAppts] = useState<Appt[]>([]);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === 'superadmin';
+  const [recordingId, setRecordingId] = useState<string | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -65,6 +69,29 @@ export default function AppointmentsPage() {
       fetchData();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Update failed');
+    }
+  };
+
+  // Record a donation straight from the appointment: adds a unit to inventory,
+  // defers the donor, and marks a still-scheduled appointment completed — so the
+  // "appointment happened" and "donation recorded" steps aren't disconnected.
+  const recordDonation = async (a: Appt) => {
+    if (!a.donorId?._id) return;
+    setRecordingId(a._id);
+    try {
+      const res = await apiClient.post(`/donors/${a.donorId._id}/record-donation`, {
+        hospitalId: isSuperadmin ? a.hospitalId?._id : undefined,
+      });
+      const { bloodGroup, units } = res.data.inventory;
+      if (a.status === 'scheduled') {
+        try { await apiClient.put(`/appointments/${a._id}/status`, { status: 'completed' }); } catch {}
+      }
+      toast.success(`Donation recorded — ${bloodGroup} stock now ${units}. Donor deferred 90 days.`);
+      fetchData();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to record donation');
+    } finally {
+      setRecordingId(null);
     }
   };
 
@@ -121,6 +148,18 @@ export default function AppointmentsPage() {
                     <TableCell className="text-sm text-muted-foreground max-w-[200px]">{a.notes || <span className="text-muted-foreground/60">—</span>}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex flex-wrap gap-2 justify-end">
+                        {(a.status === 'scheduled' || a.status === 'completed') && a.donorId?.eligibilityStatus === 'eligible' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => recordDonation(a)}
+                            disabled={recordingId === a._id}
+                            className="text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                          >
+                            <HeartHandshake className="h-4 w-4 mr-1" />
+                            {recordingId === a._id ? 'Recording…' : 'Record donation'}
+                          </Button>
+                        )}
                         {(NEXT[a.status] || []).map((n) => (
                           <Button key={n.status} size="sm" variant={n.variant || 'default'} onClick={() => setStatusFor(a._id, n.status)}>
                             {n.label}

@@ -13,6 +13,8 @@ const userSchema = new mongoose.Schema({
   hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital' },
   isActive: { type: Boolean, default: true },
   lastLogin: { type: Date },
+  resetTokenHash: { type: String, select: false },
+  resetTokenExpiry: { type: Date, select: false },
   createdAt: { type: Date, default: Date.now }
 });
 

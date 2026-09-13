@@ -34,6 +34,15 @@ export default function Home() {
           </Link>
         </div>
 
+        <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 justify-center text-sm">
+          <Link href="/track" className="text-gray-600 hover:text-red-600 hover:underline">
+            Track a request
+          </Link>
+          <Link href="/education" className="text-gray-600 hover:text-red-600 hover:underline">
+            Learn about blood donation
+          </Link>
+        </div>
+
         <div className="mt-10 text-sm text-gray-400">
           Hospital staff?{' '}
           <Link href="/login" className="text-red-600 font-medium hover:underline">

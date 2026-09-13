@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Droplet } from 'lucide-react';
+import Link from 'next/link';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -66,6 +67,11 @@ export default function LoginPage() {
               {loading ? 'Logging in...' : 'Login to Dashboard'}
             </Button>
           </form>
+          <div className="mt-4 text-center">
+            <Link href="/forgot-password" className="text-sm text-primary hover:underline">
+              Forgot password?
+            </Link>
+          </div>
           {process.env.NODE_ENV === 'development' && (
             <div className="mt-6 text-center text-xs text-gray-400 border-t pt-4">
               Demo: admin@smartbloodbank.com / admin123

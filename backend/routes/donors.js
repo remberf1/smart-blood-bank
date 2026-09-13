@@ -12,6 +12,35 @@ const { refreshDonorEligibility } = require("../services/eligibilityService");
 const { validate } = require("../middleware/validate");
 const { donorRegisterSchema } = require("../validators/schemas");
 
+// Shared donation-recording logic used by both the QR-scan (/verify) and the
+// direct by-donor (/:donorId/record-donation) paths: gate on eligibility, defer
+// the donor 90 days, and add a traceable unit to the hospital's blood inventory.
+// Throws an Error with `.status` for expected client errors.
+async function recordDonationForDonor(donor, hospitalId) {
+  if (donor.eligibilityStatus !== "eligible") {
+    const err = new Error(`Donor is not eligible to donate (status: ${donor.eligibilityStatus})`);
+    err.status = 400;
+    throw err;
+  }
+  if (!hospitalId) {
+    const err = new Error("A hospitalId is required to record a donation");
+    err.status = 400;
+    throw err;
+  }
+  donor.lastDonationDate = new Date();
+  donor.eligibilityStatus = "deferred";
+  donor.deferralReason = "90 days waiting period after donation";
+  await donor.save();
+  const units = await addBloodUnits({
+    hospitalId,
+    bloodGroup: donor.bloodGroup,
+    units: 1,
+    donorId: donor._id,
+    source: "donation",
+  });
+  return { bloodGroup: donor.bloodGroup, units };
+}
+
 // ==================== REGISTER DONOR ====================
 router.post("/register", validate(donorRegisterSchema), async (req, res) => {
   try {
@@ -154,48 +183,28 @@ router.post("/verify", auth, async (req, res) => {
     // Record a donation event: only eligible donors, then defer them and add
     // a unit of their blood group to the recording hospital's inventory.
     if (req.body.recordDonation) {
-      if (donor.eligibilityStatus !== "eligible") {
-        return res.status(400).json({
-          error: `Donor is not eligible to donate (status: ${donor.eligibilityStatus})`,
-        });
-      }
-
-      // The donation is recorded at the verifying staff's hospital.
+      // The donation is recorded at the verifying staff's hospital
+      // (superadmin may pass an explicit hospitalId).
       const hospitalId = req.user.hospitalId || req.body.hospitalId;
-      if (!hospitalId) {
-        return res.status(400).json({ error: "A hospitalId is required to record a donation" });
+      try {
+        const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId);
+        return res.json({
+          verified: true,
+          donationRecorded: true,
+          inventory: { hospitalId, bloodGroup, units },
+          donor: {
+            name: donor.name,
+            bloodGroup: donor.bloodGroup,
+            phone: donor.phone,
+            eligibilityStatus: donor.eligibilityStatus,
+            lastDonationDate: donor.lastDonationDate,
+            deferralReason: donor.deferralReason,
+          },
+        });
+      } catch (err) {
+        if (err.status) return res.status(err.status).json({ error: err.message });
+        throw err;
       }
-
-      const bloodGroup = donor.bloodGroup;
-
-      donor.lastDonationDate = new Date();
-      donor.eligibilityStatus = "deferred";
-      donor.deferralReason = "90 days waiting period after donation";
-      await donor.save();
-
-      // Record the donation as a dated, traceable batch (donorId + expiry) and
-      // refresh the hospital's blood inventory cache.
-      const units = await addBloodUnits({
-        hospitalId,
-        bloodGroup,
-        units: 1,
-        donorId: donor._id,
-        source: "donation",
-      });
-
-      return res.json({
-        verified: true,
-        donationRecorded: true,
-        inventory: { hospitalId, bloodGroup, units },
-        donor: {
-          name: donor.name,
-          bloodGroup: donor.bloodGroup,
-          phone: donor.phone,
-          eligibilityStatus: donor.eligibilityStatus,
-          lastDonationDate: donor.lastDonationDate,
-          deferralReason: donor.deferralReason,
-        },
-      });
     }
 
     res.json({
@@ -214,6 +223,41 @@ router.post("/verify", auth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// ============ RECORD A DONATION FOR A KNOWN DONOR (staff/admin) ============
+// The main UI path: staff record a donation straight from the donor list or an
+// appointment — no QR scan needed. Records the donation, defers the donor 90
+// days, and adds one traceable unit to the hospital's blood inventory.
+// Superadmin (no own hospital) must pass hospitalId in the body.
+router.post(
+  "/:donorId/record-donation",
+  auth,
+  allowRoles("superadmin", "admin", "staff"),
+  async (req, res) => {
+    try {
+      const donor = await Donor.findById(req.params.donorId);
+      if (!donor) return res.status(404).json({ error: "Donor not found" });
+
+      const hospitalId = req.user.hospitalId || req.body.hospitalId;
+      const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId);
+
+      res.json({
+        donationRecorded: true,
+        inventory: { hospitalId, bloodGroup, units },
+        donor: {
+          id: donor._id,
+          name: donor.name,
+          bloodGroup: donor.bloodGroup,
+          eligibilityStatus: donor.eligibilityStatus,
+          lastDonationDate: donor.lastDonationDate,
+        },
+      });
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      console.error(err); res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
 
 // ==================== GET DONOR BY PHONE (staff/admin only) ====================
 router.get("/phone/:phone", auth, async (req, res) => {

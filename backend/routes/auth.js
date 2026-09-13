@@ -4,8 +4,11 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { auth, isSuperAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { loginSchema, registerUserSchema, updateUserSchema } = require('../validators/schemas');
-const { notifyNewUser } = require('../services/notificationService');
+const { loginSchema, registerUserSchema, updateUserSchema, forgotPasswordSchema, resetPasswordSchema } = require('../validators/schemas');
+const { notifyNewUser, sendEmail, buildPasswordResetEmail } = require('../services/notificationService');
+const { generateResetToken, hashToken } = require('../utils/passwordReset');
+
+const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
 // ==================== REGISTER (Super Admin only - for creating staff) ====================
 router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async (req, res) => {
@@ -95,6 +98,55 @@ router.post('/login', validate(loginSchema), async (req, res) => {
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== FORGOT PASSWORD (request a reset link) ====================
+// Always responds success — never reveal whether an email is registered.
+router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
+  const generic = { message: 'If that email is registered, a reset link has been sent.' };
+  try {
+    const user = await User.findOne({ email: req.body.email });
+    if (user && user.isActive) {
+      const { raw, hash, expiry } = generateResetToken();
+      user.resetTokenHash = hash;
+      user.resetTokenExpiry = expiry;
+      await user.save();
+
+      const resetUrl = `${APP_URL}/reset-password?token=${raw}`;
+      const e = buildPasswordResetEmail(user.name, resetUrl);
+      // Best-effort: don't fail the request if email is disabled/misconfigured.
+      sendEmail(user.email, e.subject, e.text, e.html).catch((err) =>
+        console.error('Reset email failed:', err.message)
+      );
+    }
+    res.json(generic);
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== RESET PASSWORD (consume the token) ====================
+router.post('/reset-password', validate(resetPasswordSchema), async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    const user = await User.findOne({
+      resetTokenHash: hashToken(token),
+      resetTokenExpiry: { $gt: new Date() },
+    }).select('+resetTokenHash +resetTokenExpiry');
+
+    if (!user) {
+      return res.status(400).json({ error: 'This reset link is invalid or has expired.' });
+    }
+
+    user.password = password; // hashed by the pre-save hook
+    user.resetTokenHash = undefined;
+    user.resetTokenExpiry = undefined;
+    await user.save();
+
+    res.json({ message: 'Password updated. You can now sign in with your new password.' });
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 

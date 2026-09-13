@@ -34,6 +34,8 @@ const donorSchema = new mongoose.Schema({
   sosAlertCount: { type: Number, default: 0 },
   lastSosAlert: { type: Date },
   password: { type: String, select: false },
+  resetTokenHash: { type: String, select: false },
+  resetTokenExpiry: { type: Date, select: false },
   authProvider: {
     type: String,
     enum: ["local", "google", "facebook"],

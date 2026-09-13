@@ -30,7 +30,19 @@ const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
 const EMAIL_FROM = process.env.SMTP_FROM || SMTP_USER;
+const REPLY_TO = process.env.SMTP_REPLY_TO || '';
+// A mailto: or https: unsubscribe target. When set, every notification carries
+// List-Unsubscribe (+ one-click) headers — a strong deliverability signal and a
+// requirement for bulk senders under Gmail/Yahoo's 2024 rules.
+const LIST_UNSUBSCRIBE = process.env.SMTP_LIST_UNSUBSCRIBE || '';
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+
+// Optional self-DKIM signing (only for sending from a domain you control WITHOUT
+// a provider that signs for you — e.g. direct send or a relay that doesn't sign).
+// If you relay through Gmail/SendGrid/etc. they sign for you; leave these unset.
+const DKIM_DOMAIN = process.env.DKIM_DOMAIN || '';
+const DKIM_SELECTOR = process.env.DKIM_SELECTOR || '';
+const DKIM_PRIVATE_KEY = (process.env.DKIM_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
 const EMAIL_ENABLED =
   process.env.EMAIL_ENABLED !== 'false' && Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
@@ -38,15 +50,34 @@ const EMAIL_ENABLED =
 let mailer = null;
 if (EMAIL_ENABLED) {
   try {
-    mailer = nodemailer.createTransport({
+    const transport = {
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_PORT === 465, // implicit TLS on 465, STARTTLS otherwise
       auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
+    };
+    if (DKIM_DOMAIN && DKIM_SELECTOR && DKIM_PRIVATE_KEY) {
+      transport.dkim = {
+        domainName: DKIM_DOMAIN,
+        keySelector: DKIM_SELECTOR,
+        privateKey: DKIM_PRIVATE_KEY,
+      };
+    }
+    mailer = nodemailer.createTransport(transport);
   } catch (err) {
     console.error('Email transport init failed; email disabled:', err.message);
   }
+}
+
+// Shared headers applied to every outbound email (deliverability signals).
+function commonMailHeaders() {
+  if (!LIST_UNSUBSCRIBE) return undefined;
+  const headers = { 'List-Unsubscribe': `<${LIST_UNSUBSCRIBE}>` };
+  // One-click unsubscribe is only valid for an https target (RFC 8058).
+  if (LIST_UNSUBSCRIBE.startsWith('http')) {
+    headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
+  }
+  return headers;
 }
 
 // Send a WhatsApp message. Never throws — returns a result object.
@@ -79,6 +110,9 @@ async function sendEmail(to, subject, text, html) {
   try {
     const msg = { from: EMAIL_FROM, to, subject, text };
     if (html) msg.html = html;
+    if (REPLY_TO) msg.replyTo = REPLY_TO;
+    const headers = commonMailHeaders();
+    if (headers) msg.headers = headers;
     const info = await mailer.sendMail(msg);
     return { sent: true, id: info.messageId };
   } catch (err) {
@@ -245,6 +279,27 @@ function buildAppointmentReminderEmail(appointment, hospitalName) {
   return { subject: 'Reminder: your blood donation appointment', text, html };
 }
 
+function buildPasswordResetEmail(name, resetUrl) {
+  const greeting = name ? `Hi ${name},` : 'Hello,';
+  const text = `${greeting}
+
+We received a request to reset your Smart Blood Bank password.
+Reset it here (link valid for 1 hour): ${resetUrl}
+
+If you didn't request this, you can safely ignore this email — your password won't change.`;
+  const html = renderEmail({
+    emoji: '🔒',
+    heading: 'Reset your password',
+    paragraphs: [
+      greeting,
+      'We received a request to reset your Smart Blood Bank password. Click the button below to choose a new one. This link is valid for 1 hour.',
+      "If you didn't request this, you can safely ignore this email — your password won't change.",
+    ],
+    cta: { label: 'Reset password', url: resetUrl },
+  });
+  return { subject: 'Reset your Smart Blood Bank password', text, html };
+}
+
 function buildWelcomeEmail(user) {
   const name = user.name ? `Hi ${user.name},` : 'Hello,';
   const text = `${name}
@@ -348,4 +403,5 @@ module.exports = {
   buildEligibleEmail,
   buildAppointmentReminderEmail,
   buildWelcomeEmail,
+  buildPasswordResetEmail,
 };
