@@ -4,7 +4,7 @@ import apiClient from '../../api/client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
-import { AlertTriangle, TrendingUp, PackagePlus, Info } from 'lucide-react';
+import { AlertTriangle, TrendingUp, PackagePlus, Info, Cpu } from 'lucide-react';
 
 type GroupForecast = {
   bloodGroup: string;
@@ -31,6 +31,8 @@ type Forecast = {
   totalSuggestedRestock: number;
   atRiskGroups: string[];
   groups: GroupForecast[];
+  engine?: 'xgboost' | 'heuristic';
+  modelInfo?: { trained_at?: string; metrics?: { mae?: number; improvement_pct?: number } } | null;
 };
 
 const RISK_META: Record<string, { label: string; className: string }> = {
@@ -172,6 +174,29 @@ export default function ForecastPage() {
           </select>
         }
       />
+
+      {/* Which engine produced this forecast */}
+      {data.engine === 'xgboost' ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm">
+          <Cpu className="h-4 w-4 text-primary shrink-0" />
+          <span className="font-medium text-foreground">XGBoost model</span>
+          {data.modelInfo?.metrics && (
+            <span className="text-muted-foreground">
+              · test MAE {data.modelInfo.metrics.mae}
+              {typeof data.modelInfo.metrics.improvement_pct === 'number' &&
+                ` · ${data.modelInfo.metrics.improvement_pct}% better than a 7-day average`}
+            </span>
+          )}
+          {data.modelInfo?.trained_at && (
+            <span className="text-muted-foreground">· trained {new Date(data.modelInfo.trained_at).toLocaleDateString()}</span>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground">
+          <Info className="h-4 w-4 shrink-0" />
+          Heuristic forecast (statistical baseline — the ML service is offline).
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <Kpi

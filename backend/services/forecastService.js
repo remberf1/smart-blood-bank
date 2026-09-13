@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const PatientRequest = require('../models/PatientRequest');
 const Inventory = require('../models/Inventory');
+const Hospital = require('../models/Hospital');
+const demandModel = require('./demandModel');
 
 // ---------------------------------------------------------------------------
 // In-app blood demand forecasting.
@@ -203,12 +205,13 @@ async function forecastForHospital(hospitalId, options = {}) {
     stockMatch.hospitalId = oid(hospitalId);
   }
 
-  const [requests, stockRows] = await Promise.all([
+  const [requests, stockRows, hospital] = await Promise.all([
     PatientRequest.find(reqMatch).select('bloodGroup units createdAt').lean(),
     Inventory.aggregate([
       { $match: stockMatch },
       { $group: { _id: '$bloodGroup', units: { $sum: '$units' } } },
     ]),
+    hospitalId ? Hospital.findById(hospitalId).select('profile').lean() : null,
   ]);
 
   const stockByGroup = Object.fromEntries(stockRows.map((r) => [r._id, r.units]));
@@ -217,9 +220,44 @@ async function forecastForHospital(hospitalId, options = {}) {
     if (reqByGroup[r.bloodGroup]) reqByGroup[r.bloodGroup].push(r);
   }
 
+  // Historical daily series per group (also feeds the ML "recent" window and the
+  // std used for safety stock in either engine).
+  const seriesByGroup = Object.fromEntries(
+    BLOOD_GROUPS.map((g) => [g, buildDailySeries(reqByGroup[g], { days: historyDays, now })])
+  );
+
+  // Try the XGBoost service for the whole hospital in one call; null on any
+  // failure/timeout → we fall back to the in-process heuristic per group.
+  const profile = (hospital && hospital.profile) || {};
+  const mlBatch = await demandModel.predictBatch(
+    profile,
+    BLOOD_GROUPS.map((g) => ({ bloodGroup: g, recent: seriesByGroup[g].map((s) => s.units) })),
+    horizonDays
+  );
+
+  let engine = mlBatch ? 'xgboost' : 'heuristic';
+
   const groups = BLOOD_GROUPS.map((group) => {
-    const series = buildDailySeries(reqByGroup[group], { days: historyDays, now });
-    const forecast = predictDemand(series, { horizonDays, now });
+    const series = seriesByGroup[group];
+    const std = stdDev(series.map((s) => s.units));
+    const ml = mlBatch && mlBatch.byGroup[group];
+
+    let forecast;
+    if (ml) {
+      forecast = {
+        dailyMean: ml.dailyMean,
+        total: ml.total,
+        std,
+        perDay: ml.perDay,
+        confidence: 'model',
+        trend: null,
+        source: 'xgboost',
+      };
+    } else {
+      const h = predictDemand(series, { horizonDays, now });
+      forecast = { ...h, source: 'heuristic' };
+    }
+
     const currentStock = stockByGroup[group] || 0;
     const shortage = assessShortage(forecast, currentStock, { horizonDays });
     return {
@@ -231,6 +269,7 @@ async function forecastForHospital(hospitalId, options = {}) {
         confidence: forecast.confidence,
         trend: forecast.trend,
         perDay: forecast.perDay,
+        source: forecast.source,
       },
       ...shortage,
     };
@@ -240,6 +279,8 @@ async function forecastForHospital(hospitalId, options = {}) {
 
   return {
     scope: hospitalId ? 'hospital' : 'network',
+    engine,
+    modelInfo: mlBatch ? mlBatch.model : null,
     horizonDays,
     historyDays,
     generatedAt: now.toISOString(),

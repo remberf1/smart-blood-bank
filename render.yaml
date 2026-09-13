@@ -1,0 +1,93 @@
+# Render Blueprint — deploys the whole Smart Blood Bank stack:
+#   sbb-ml   Python XGBoost demand-prediction service
+#   sbb-api  Node/Express API
+#   sbb-web  Next.js frontend
+# MongoDB stays on your existing Atlas cluster (set MONGODB_URI on sbb-api).
+#
+# Deploy: push to GitHub → Render → New → Blueprint → pick this repo.
+# Then fill the secret env vars (marked `sync: false`) — see DEPLOY.md.
+
+services:
+  # ---------------- Python ML demand-prediction service ----------------
+  - type: web
+    name: sbb-ml
+    runtime: python
+    rootDir: ml-service
+    plan: free
+    # Train the model on every deploy (fast, data is generated in-code) so no
+    # binary model artifact needs to live in git.
+    buildCommand: pip install -r requirements.txt && python train.py
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.7"
+
+  # ---------------- Node / Express API ----------------
+  - type: web
+    name: sbb-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # ML service URL is wired automatically from the sbb-ml service host.
+      - key: ML_SERVICE_URL
+        fromService:
+          name: sbb-ml
+          type: web
+          property: host
+      # Secrets / per-deploy values — set these in the Render dashboard:
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      # The frontend's public URL, for CORS (set after sbb-web is created).
+      - key: FRONTEND_ORIGINS
+        sync: false
+      # Public URL of the API itself, used in email links (set to sbb-api's URL).
+      - key: APP_URL
+        sync: false
+      # Notifications (optional — leave EMAIL/NOTIFICATIONS disabled if unset).
+      - key: EMAIL_ENABLED
+        value: "false"
+      - key: NOTIFICATIONS_ENABLED
+        value: "false"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_NUMBER
+        sync: false
+
+  # ---------------- Next.js frontend ----------------
+  - type: web
+    name: sbb-web
+    runtime: node
+    rootDir: frontend
+    plan: free
+    # --include=dev: Next needs typescript/tailwind, which live in devDependencies
+    # and would be skipped under Render's production install otherwise.
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start -- -p $PORT -H 0.0.0.0
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # NEXT_PUBLIC_* is baked at BUILD time. Set this to the sbb-api URL WITH the
+      # /api suffix, e.g. https://sbb-api.onrender.com/api, then redeploy sbb-web.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
