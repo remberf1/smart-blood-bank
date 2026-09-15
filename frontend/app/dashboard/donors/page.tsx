@@ -43,7 +43,22 @@ import {
   CheckCircle,
   AlertCircle,
   HeartHandshake,
+  ArrowUpDown,
 } from 'lucide-react';
+
+function SortHead({ label, col, sort, onSort }: { label: string; col: string; sort: string; onSort: (c: any) => void }) {
+  const active = SORT_KEYS[col] === sort;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(col)}
+      className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground font-medium' : ''}`}
+    >
+      {label}
+      <ArrowUpDown className={`h-3 w-3 ${active ? 'text-primary' : 'text-muted-foreground/50'}`} />
+    </button>
+  );
+}
 
 interface Hospital { _id: string; name: string }
 
@@ -54,11 +69,20 @@ interface Donor {
   email: string;
   bloodGroup: string;
   eligibilityStatus: string;
+  deferralReason?: string;
   lastDonationDate: string;
   createdAt: string;
 }
 
 const PAGE_SIZE = 20;
+const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+// Clickable column → backend sort key.
+const SORT_KEYS: Record<string, string> = {
+  bloodGroup: 'bloodGroup',
+  status: 'status',
+  lastDonation: 'lastDonation',
+  registered: 'recent',
+};
 
 export default function DonorsPage() {
   const [donors, setDonors] = useState<Donor[]>([]);
@@ -68,6 +92,9 @@ export default function DonorsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [stats, setStats] = useState({ total: 0, eligible: 0, deferred: 0, bloodGroups: 0 });
+  const [bloodFilter, setBloodFilter] = useState('');
+  const [eligFilter, setEligFilter] = useState('');
+  const [sort, setSort] = useState('recent');
   const [selectedDonor, setSelectedDonor] = useState<Donor | null>(null);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -83,7 +110,14 @@ export default function DonorsPage() {
     setLoading(true);
     try {
       const response = await apiClient.get('/donors', {
-        params: { page: pageArg, limit: PAGE_SIZE, search: search || undefined },
+        params: {
+          page: pageArg,
+          limit: PAGE_SIZE,
+          search: search || undefined,
+          bloodGroup: bloodFilter || undefined,
+          eligibility: eligFilter || undefined,
+          sort,
+        },
       });
       setDonors(response.data.data);
       setTotalPages(response.data.totalPages);
@@ -105,11 +139,19 @@ export default function DonorsPage() {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  // Fetch whenever the page or the (debounced) search changes.
+  // Changing a filter or the sort resets to the first page.
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bloodFilter, eligFilter, sort]);
+
+  // Fetch whenever the page, search, filters, or sort change.
   useEffect(() => {
     fetchDonors(page, debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch]);
+  }, [page, debouncedSearch, bloodFilter, eligFilter, sort]);
+
+  const toggleSort = (col: keyof typeof SORT_KEYS) => setSort(SORT_KEYS[col]);
 
   const fetchQrCode = async (donorId: string) => {
     try {
@@ -131,15 +173,18 @@ export default function DonorsPage() {
   // recorded; load the hospital list the first time the dialog is opened.
   const openRecord = async (donor: Donor) => {
     setRecordDonor(donor);
-    setRecordHospitalId('');
-    if (isSuperadmin && hospitals.length === 0) {
+    let list = hospitals;
+    if (isSuperadmin && list.length === 0) {
       try {
         const res = await apiClient.get('/hospitals');
+        list = res.data;
         setHospitals(res.data);
       } catch {
         toast.error('Could not load hospitals');
       }
     }
+    // Default the hospital so it's never left blank (superadmin can change it).
+    setRecordHospitalId(isSuperadmin ? (list[0]?._id || '') : '');
   };
 
   const handleRecordDonation = async () => {
@@ -232,17 +277,48 @@ export default function DonorsPage() {
         </Card>
       </div>
 
-      {/* Search Bar */}
-      <div>
-        <div className="relative max-w-md">
+      {/* Search + filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by name, phone, or blood group..."
+            placeholder="Search by name, phone, or email…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-9"
           />
         </div>
+        <select
+          value={bloodFilter}
+          onChange={(e) => setBloodFilter(e.target.value)}
+          className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
+        >
+          <option value="">All blood groups</option>
+          {BLOOD_GROUPS.map((bg) => (
+            <option key={bg} value={bg}>{bg}</option>
+          ))}
+        </select>
+        <select
+          value={eligFilter}
+          onChange={(e) => setEligFilter(e.target.value)}
+          className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
+        >
+          <option value="">All statuses</option>
+          <option value="eligible">Eligible</option>
+          <option value="deferred">Deferred</option>
+          <option value="pending">Pending</option>
+          <option value="ineligible">Ineligible</option>
+        </select>
+        {(bloodFilter || eligFilter || searchTerm) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setBloodFilter(''); setEligFilter(''); setSearchTerm(''); }}
+            className="text-muted-foreground"
+          >
+            Clear
+          </Button>
+        )}
       </div>
 
       {/* Donors Table */}
@@ -254,10 +330,18 @@ export default function DonorsPage() {
                 <TableRow>
                   <TableHead>Donor</TableHead>
                   <TableHead>Contact</TableHead>
-                  <TableHead>Blood Group</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Donation</TableHead>
-                  <TableHead>Registered</TableHead>
+                  <TableHead>
+                    <SortHead label="Blood Group" col="bloodGroup" sort={sort} onSort={toggleSort} />
+                  </TableHead>
+                  <TableHead>
+                    <SortHead label="Status" col="status" sort={sort} onSort={toggleSort} />
+                  </TableHead>
+                  <TableHead>
+                    <SortHead label="Last Donation" col="lastDonation" sort={sort} onSort={toggleSort} />
+                  </TableHead>
+                  <TableHead>
+                    <SortHead label="Registered" col="registered" sort={sort} onSort={toggleSort} />
+                  </TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -303,7 +387,15 @@ export default function DonorsPage() {
                             {donor.bloodGroup}
                           </Badge>
                         </TableCell>
-                        <TableCell>{getEligibilityBadge(donor.eligibilityStatus)}</TableCell>
+                        <TableCell>
+                          {getEligibilityBadge(donor.eligibilityStatus)}
+                          {donor.deferralReason &&
+                            (donor.eligibilityStatus === 'deferred' || donor.eligibilityStatus === 'ineligible') && (
+                              <div className="text-xs text-muted-foreground mt-1 max-w-[200px]">
+                                {donor.deferralReason}
+                              </div>
+                            )}
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <LastDonationIcon className={`h-3 w-3 ${lastDonation.color}`} />

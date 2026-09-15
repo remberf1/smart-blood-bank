@@ -130,6 +130,7 @@ export default function UsersPage() {
 
   const roleColor = (r: string) =>
     r === 'superadmin' ? 'bg-purple-100 text-purple-700' : r === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-muted text-foreground';
+  const roleLabel = (r: string) => (r === 'superadmin' ? 'Superadmin' : r.charAt(0).toUpperCase() + r.slice(1));
 
   return (
     <div className="space-y-6">
@@ -158,7 +159,7 @@ export default function UsersPage() {
                   <TableCell className="font-medium">{u.name}</TableCell>
                   <TableCell className="text-muted-foreground">{u.email}</TableCell>
                   <TableCell>
-                    <Badge className={roleColor(u.role)}>{u.role}</Badge>
+                    <Badge className={roleColor(u.role)}>{roleLabel(u.role)}</Badge>
                   </TableCell>
                   <TableCell>{u.hospitalId?.name || <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell>
@@ -222,7 +223,7 @@ export default function UsersPage() {
                   disabled={!!editing && editing._id === user?.id}
                 >
                   {ROLES.map((r) => (
-                    <option key={r} value={r}>{r}</option>
+                    <option key={r} value={r}>{roleLabel(r)}</option>
                   ))}
                 </select>
                 {!!editing && editing._id === user?.id && (

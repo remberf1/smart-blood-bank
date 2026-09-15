@@ -5,17 +5,31 @@ const Inventory = require('../models/Inventory'); // To check if hospital has in
 const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
 const { canAccessHospital } = require('../middleware/roles');
 
+// Contact phone: allow +, spaces, dashes and parentheses as formatting, but the
+// digits must be 10–14 and there must be no letters. Rejects the "too long /
+// contains letters" input the UI used to accept.
+function isValidContactPhone(raw) {
+  if (!raw) return false;
+  const digits = String(raw).replace(/[\s()+-]/g, '');
+  return /^\d{10,14}$/.test(digits);
+}
+const PHONE_ERROR = 'Enter a valid phone number — 10 to 14 digits, no letters.';
+
 // ==================== CREATE HOSPITAL (superadmin only) ====================
 router.post('/', auth, isSuperAdmin, async (req, res) => {
   try {
     const { name, address, location, contactPhone } = req.body;
-    
+
+    if (!isValidContactPhone(contactPhone)) {
+      return res.status(400).json({ error: PHONE_ERROR });
+    }
+
     // Check if hospital already exists
     const existing = await Hospital.findOne({ name });
     if (existing) {
       return res.status(400).json({ error: 'Hospital with this name already exists' });
     }
-    
+
     const hospital = new Hospital({ name, address, location, contactPhone });
     await hospital.save();
     res.status(201).json(hospital);
@@ -55,6 +69,10 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(403).json({ error: 'You can only edit your own hospital' });
     }
     const { name, address, location, contactPhone } = req.body;
+
+    if (contactPhone !== undefined && !isValidContactPhone(contactPhone)) {
+      return res.status(400).json({ error: PHONE_ERROR });
+    }
 
     const hospital = await Hospital.findByIdAndUpdate(
       req.params.id,

@@ -76,6 +76,11 @@ export default function HospitalsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const digits = formData.contactPhone.replace(/[\s()+-]/g, '');
+    if (!/^\d{10,14}$/.test(digits)) {
+      toast.error('Enter a valid phone number — 10 to 14 digits, no letters.');
+      return;
+    }
     try {
       if (editingHospital) {
         await apiClient.put(`/hospitals/${editingHospital._id}`, formData);
@@ -296,12 +301,24 @@ export default function HospitalsPage() {
                 <Label htmlFor="contactPhone">Contact Phone</Label>
                 <Input
                   id="contactPhone"
+                  type="tel"
+                  inputMode="tel"
+                  maxLength={17}
                   value={formData.contactPhone}
-                  onChange={(e) => setFormData({ ...formData, contactPhone: e.target.value })}
+                  onChange={(e) =>
+                    // Only allow phone characters (digits, +, space, dash, parens).
+                    setFormData({ ...formData, contactPhone: e.target.value.replace(/[^\d+\s()-]/g, '') })
+                  }
                   placeholder="e.g., 08012345678"
                   required
                 />
+                <p className="text-xs text-muted-foreground">10–14 digits, no letters.</p>
               </div>
+              {editingHospital && (
+                <p className="text-xs text-muted-foreground">
+                  Reference: <span className="font-mono">{editingHospital._id.slice(-6).toUpperCase()}</span>
+                </p>
+              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>

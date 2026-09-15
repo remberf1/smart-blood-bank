@@ -327,8 +327,18 @@ router.get("/", auth, isAdmin, async (req, res) => {
       filter.$or = [{ name: rx }, { phone: rx }, { email: rx }];
     }
 
+    // Sorting: whitelist of safe sort keys so the client can order the table.
+    const SORTS = {
+      recent: { createdAt: -1 },
+      name: { name: 1 },
+      bloodGroup: { bloodGroup: 1 },
+      status: { eligibilityStatus: 1 },
+      lastDonation: { lastDonationDate: -1 },
+    };
+    const sort = SORTS[req.query.sort] || SORTS.recent;
+
     const [data, total, eligible, deferred, groups] = await Promise.all([
-      Donor.find(filter).select("-qrCode").sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Donor.find(filter).select("-qrCode").sort(sort).skip(skip).limit(limit),
       Donor.countDocuments(filter),
       Donor.countDocuments({ ...filter, eligibilityStatus: "eligible" }),
       Donor.countDocuments({ ...filter, eligibilityStatus: "deferred" }),

@@ -71,7 +71,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen bg-muted/40">
-      <Toaster position="top-right" />
+      <Toaster position="top-right" toastOptions={{ duration: 5000, error: { duration: 6500 } }} />
 
       {/* Mobile menu button */}
       <div className="lg:hidden fixed top-4 left-4 z-50">

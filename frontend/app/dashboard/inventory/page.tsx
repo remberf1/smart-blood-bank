@@ -96,6 +96,15 @@ export default function InventoryPage() {
     oxygenFillStatus: "empty" as "full" | "partial" | "empty",
   });
 
+  // Blood table filters + pagination (the table can have a row per hospital ×
+  // group, so it gets long — condense it).
+  const [groupFilter, setGroupFilter] = useState("");
+  const [hospitalFilter, setHospitalFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(""); // '', 'available', 'low', 'out'
+  const [bloodPage, setBloodPage] = useState(1);
+  const BLOOD_PER_PAGE = 10;
+  const resetBloodPage = () => setBloodPage(1);
+
   useEffect(() => {
     fetchAllData();
   }, []);
@@ -244,6 +253,36 @@ export default function InventoryPage() {
     0,
   );
 
+  // Availability per blood group across the (optionally hospital-filtered) rows —
+  // shows at a glance which of the 8 groups are out/low, including groups with
+  // no rows at all (which the table alone can't show).
+  const overviewRows = hospitalFilter
+    ? bloodInventory.filter((i) => i.hospitalId?._id === hospitalFilter)
+    : bloodInventory;
+  const groupTotals = BLOOD_GROUPS.map((bg) => ({
+    bloodGroup: bg,
+    units: overviewRows
+      .filter((i) => i.bloodGroup === bg)
+      .reduce((s, i) => s + i.units, 0),
+  }));
+  const stockLevel = (u: number) => (u === 0 ? "out" : u < 10 ? "low" : "ok");
+
+  // Filtered + paginated detail rows.
+  const filteredBlood = bloodInventory.filter((i) => {
+    if (groupFilter && i.bloodGroup !== groupFilter) return false;
+    if (hospitalFilter && i.hospitalId?._id !== hospitalFilter) return false;
+    if (statusFilter) {
+      const lvl = i.units === 0 ? "out" : i.units < 10 ? "low" : "available";
+      if (lvl !== statusFilter) return false;
+    }
+    return true;
+  });
+  const bloodTotalPages = Math.max(Math.ceil(filteredBlood.length / BLOOD_PER_PAGE), 1);
+  const pagedBlood = filteredBlood.slice(
+    (bloodPage - 1) * BLOOD_PER_PAGE,
+    bloodPage * BLOOD_PER_PAGE,
+  );
+
   if (loading) return <div className="p-8 text-center">Loading...</div>;
 
   return (
@@ -378,15 +417,86 @@ export default function InventoryPage() {
       {/* Blood Inventory Section */}
       {activeTab === "blood" && (
         <>
-          <div className="flex justify-end mb-4">
-            <Button
-              onClick={() => {
-                resetBloodForm();
-                setBloodDialogOpen(true);
-              }}
+          {/* Availability overview — all 8 groups, so out-of-stock groups are visible */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Availability by group{hospitalFilter ? " (selected hospital)" : " (all hospitals)"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                {groupTotals.map((g) => {
+                  const lvl = stockLevel(g.units);
+                  const cls =
+                    lvl === "out"
+                      ? "bg-red-50 border-red-200 text-red-700"
+                      : lvl === "low"
+                        ? "bg-amber-50 border-amber-200 text-amber-700"
+                        : "bg-emerald-50 border-emerald-200 text-emerald-700";
+                  return (
+                    <button
+                      key={g.bloodGroup}
+                      type="button"
+                      onClick={() => { setGroupFilter(g.bloodGroup === groupFilter ? "" : g.bloodGroup); resetBloodPage(); }}
+                      className={`rounded-lg border p-2 text-center transition-colors ${cls} ${groupFilter === g.bloodGroup ? "ring-2 ring-primary" : ""}`}
+                      title={lvl === "out" ? "Unavailable" : `${g.units} units`}
+                    >
+                      <div className="text-sm font-bold">{g.bloodGroup}</div>
+                      <div className="text-xs">{lvl === "out" ? "—" : `${g.units}u`}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Filters + Add */}
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={groupFilter}
+              onChange={(e) => { setGroupFilter(e.target.value); resetBloodPage(); }}
+              className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
             >
-              <Plus className="h-4 w-4 mr-2" /> Add Blood
-            </Button>
+              <option value="">All groups</option>
+              {BLOOD_GROUPS.map((bg) => <option key={bg} value={bg}>{bg}</option>)}
+            </select>
+            {isSuperadmin && (
+              <select
+                value={hospitalFilter}
+                onChange={(e) => { setHospitalFilter(e.target.value); resetBloodPage(); }}
+                className="h-9 border border-input rounded-lg px-3 text-sm bg-card max-w-[220px]"
+              >
+                <option value="">All hospitals</option>
+                {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name}</option>)}
+              </select>
+            )}
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); resetBloodPage(); }}
+              className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
+            >
+              <option value="">Any status</option>
+              <option value="available">Available</option>
+              <option value="low">Low (&lt;10)</option>
+              <option value="out">Out of stock</option>
+            </select>
+            {(groupFilter || hospitalFilter || statusFilter) && (
+              <Button variant="ghost" size="sm" className="text-muted-foreground"
+                onClick={() => { setGroupFilter(""); setHospitalFilter(""); setStatusFilter(""); resetBloodPage(); }}>
+                Clear
+              </Button>
+            )}
+            <div className="ml-auto">
+              <Button
+                onClick={() => {
+                  resetBloodForm();
+                  setBloodDialogOpen(true);
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" /> Add Blood
+              </Button>
+            </div>
           </div>
           <Card>
             <CardContent className="p-0">
@@ -402,7 +512,14 @@ export default function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {bloodInventory.map((item) => {
+                  {pagedBlood.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        No matching inventory.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {pagedBlood.map((item) => {
                     const status =
                       item.units === 0
                         ? "Out of Stock"
@@ -451,20 +568,27 @@ export default function InventoryPage() {
                       </TableRow>
                     );
                   })}
-                  {bloodInventory.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={6}
-                        className="text-center py-8 text-muted-foreground"
-                      >
-                        No blood inventory found.
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
+          {filteredBlood.length > BLOOD_PER_PAGE && (
+            <div className="flex items-center justify-between mt-4">
+              <p className="text-sm text-muted-foreground">
+                Page {bloodPage} of {bloodTotalPages} · {filteredBlood.length} rows
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={bloodPage <= 1}
+                  onClick={() => setBloodPage((p) => Math.max(p - 1, 1))}>
+                  Previous
+                </Button>
+                <Button variant="outline" size="sm" disabled={bloodPage >= bloodTotalPages}
+                  onClick={() => setBloodPage((p) => Math.min(p + 1, bloodTotalPages))}>
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
 

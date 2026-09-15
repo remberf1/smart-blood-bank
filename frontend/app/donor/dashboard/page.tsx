@@ -171,7 +171,7 @@ export default function DonorDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Toaster position="top-right" />
+      <Toaster position="top-right" toastOptions={{ duration: 5000, error: { duration: 6500 } }} />
       {/* Top bar */}
       <header className="bg-white border-b">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
