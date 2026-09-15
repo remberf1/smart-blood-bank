@@ -72,15 +72,18 @@ export default function ResourceRequestsPage() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
+    requestingHospitalId: "", // superadmin only (others use their own hospital)
     supplyingHospitalId: "",
     resourceType: "blood" as "blood" | "oxygen",
     bloodGroup: "",
-    units: 1,
+    units: "1", // string so it can be cleared/retyped on mobile
     notes: "",
   });
   const router = useRouter();
   const { user } = useAuth();
+  const isSuper = user?.role === "superadmin";
 
   // Fetch all data
  const fetchData = async () => {
@@ -133,27 +136,45 @@ export default function ResourceRequestsPage() {
   };
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    const units = parseInt(formData.units, 10);
+    if (!units || units < 1) {
+      toast.error("Enter how many units you need (1 or more).");
+      return;
+    }
+    if (formData.resourceType === "blood" && !formData.bloodGroup) {
+      toast.error("Select a blood group.");
+      return;
+    }
+    if (isSuper && !formData.requestingHospitalId) {
+      toast.error("Select which hospital is requesting.");
+      return;
+    }
+    setSubmitting(true);
     try {
       await apiClient.post("/resource-requests", {
+        requestingHospitalId: isSuper ? formData.requestingHospitalId : undefined,
         supplyingHospitalId: formData.supplyingHospitalId,
         resourceType: formData.resourceType,
         bloodGroup:
           formData.resourceType === "blood" ? formData.bloodGroup : undefined,
-        units: formData.units,
-        notes: formData.notes,
+        units,
+        notes: formData.notes || undefined,
       });
       toast.success("Request sent");
       setDialogOpen(false);
       setFormData({
+        requestingHospitalId: "",
         supplyingHospitalId: "",
         resourceType: "blood",
         bloodGroup: "",
-        units: 1,
+        units: "1",
         notes: "",
       });
       fetchData(); // refresh lists
     } catch (err: any) {
       toast.error(err.response?.data?.error || "Failed to create request");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -207,7 +228,11 @@ export default function ResourceRequestsPage() {
           </Badge>
         );
       default:
-        return <Badge variant="outline">{status}</Badge>;
+        return (
+          <Badge variant="outline" className="capitalize">
+            {status}
+          </Badge>
+        );
     }
   };
 
@@ -216,9 +241,12 @@ export default function ResourceRequestsPage() {
   // Filter suppliers based on current selection, excluding your own hospital
   // (you request from OTHER hospitals, not yourself).
   const availableSuppliers = getAvailableSuppliers();
+  // Exclude the requesting hospital (your own, or the one superadmin picked) —
+  // you can't request from yourself.
+  const excludeId = isSuper ? formData.requestingHospitalId : user?.hospitalId;
   const uniqueSuppliers = Array.from(
     new Map(availableSuppliers.map((h) => [h._id, h])).values(),
-  ).filter((h) => h._id !== user?.hospitalId);
+  ).filter((h) => h._id !== excludeId);
 
   return (
     <div className="space-y-6">
@@ -233,11 +261,15 @@ export default function ResourceRequestsPage() {
         }
       />
 
-      {/* Incoming Requests */}
+      {/* Incoming Requests (network-wide for superadmin) */}
       <div className="mb-8">
-        <h2 className="text-xl font-semibold mb-4">Incoming Requests</h2>
+        <h2 className="text-xl font-semibold mb-4">
+          {isSuper ? "All Resource Requests (network)" : "Incoming Requests"}
+        </h2>
         {incomingRequests.length === 0 ? (
-          <p className="text-muted-foreground">No incoming requests.</p>
+          <p className="text-muted-foreground">
+            {isSuper ? "No resource requests yet." : "No incoming requests."}
+          </p>
         ) : (
           <div className="bg-card rounded shadow overflow-hidden">
             <Table>
@@ -255,7 +287,14 @@ export default function ResourceRequestsPage() {
               <TableBody>
                 {incomingRequests.map((req) => (
                   <TableRow key={req._id}>
-                    <TableCell>{req.requestingHospitalId?.name}</TableCell>
+                    <TableCell>
+                      {req.requestingHospitalId?.name || "—"}
+                      {isSuper && req.supplyingHospitalId?.name && (
+                        <div className="text-xs text-muted-foreground">
+                          → {req.supplyingHospitalId.name}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {req.resourceType === "blood" ? (
                         <span className="flex items-center gap-1">
@@ -299,6 +338,18 @@ export default function ResourceRequestsPage() {
                           </Button>
                         </div>
                       )}
+                      {/* Superadmin oversees the whole flow from this table, so
+                          they can also mark an approved request received. */}
+                      {isSuper && req.status === "approved" && (
+                        <Button
+                          size="sm"
+                          onClick={() => handleComplete(req._id)}
+                          variant="outline"
+                          className="border-green-600 text-green-600"
+                        >
+                          Mark Received
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -308,8 +359,8 @@ export default function ResourceRequestsPage() {
         )}
       </div>
 
-      {/* Outgoing Requests */}
-      <div>
+      {/* Outgoing Requests — superadmin acts from the network table above */}
+      <div hidden={isSuper}>
         <h2 className="text-xl font-semibold mb-4">Outgoing Requests</h2>
         {outgoingRequests.length === 0 ? (
           <p className="text-muted-foreground">No outgoing requests.</p>
@@ -387,6 +438,30 @@ export default function ResourceRequestsPage() {
           </DialogHeader>
           <form onSubmit={handleCreateRequest}>
             <div className="space-y-4 py-4">
+              {isSuper && (
+                <div className="space-y-2">
+                  <Label>Requesting Hospital</Label>
+                  <Select
+                    value={formData.requestingHospitalId}
+                    onValueChange={(val) =>
+                      setFormData({ ...formData, requestingHospitalId: val ?? "", supplyingHospitalId: "" })
+                    }
+                    items={hospitals.map((h) => ({ label: h.name, value: h._id }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select requesting hospital" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {hospitals.map((h) => (
+                        <SelectItem key={h._id} value={h._id}>
+                          {h.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label>Resource Type</Label>
                 <Select
@@ -398,6 +473,10 @@ export default function ResourceRequestsPage() {
                       bloodGroup: "",
                     })
                   }
+                  items={[
+                    { label: "Blood", value: "blood" },
+                    { label: "Oxygen", value: "oxygen" },
+                  ]}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -417,6 +496,9 @@ export default function ResourceRequestsPage() {
                     onValueChange={(val) =>
                       setFormData({ ...formData, bloodGroup: val ?? "" })
                     }
+                    items={["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(
+                      (bg) => ({ label: bg, value: bg }),
+                    )}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select blood group" />
@@ -469,12 +551,12 @@ export default function ResourceRequestsPage() {
                 <Input
                   type="number"
                   min="1"
+                  inputMode="numeric"
                   value={formData.units}
                   onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      units: parseInt(e.target.value) || 1,
-                    })
+                    // Keep the raw string so the field can be cleared/retyped on
+                    // mobile; it's coerced to a number on submit.
+                    setFormData({ ...formData, units: e.target.value })
                   }
                   required
                 />
@@ -499,8 +581,11 @@ export default function ResourceRequestsPage() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={!formData.supplyingHospitalId}>
-                Send Request
+              <Button
+                type="submit"
+                disabled={!formData.supplyingHospitalId || submitting}
+              >
+                {submitting ? "Sending…" : "Send Request"}
               </Button>
             </DialogFooter>
           </form>

@@ -12,8 +12,15 @@ const { resourceRequestSchema } = require('../validators/schemas');
 router.post('/', auth, allowRoles('admin', 'superadmin'), validate(resourceRequestSchema), async (req, res) => {
   try {
     const { supplyingHospitalId, resourceType, bloodGroup, units, notes } = req.body;
+    // Admin/staff request on behalf of their own hospital; superadmin must say
+    // which hospital is requesting.
     const requestingHospitalId = req.user.hospitalId || req.body.requestingHospitalId;
-    if (!requestingHospitalId) return res.status(400).json({ error: 'Your hospital ID not found' });
+    if (!requestingHospitalId) {
+      return res.status(400).json({ error: 'Select which hospital is requesting.' });
+    }
+    if (requestingHospitalId.toString() === supplyingHospitalId?.toString()) {
+      return res.status(400).json({ error: 'A hospital cannot request from itself.' });
+    }
 
     // Optional: check if supplying hospital actually has enough stock
     const inventory = await Inventory.findOne({
@@ -45,12 +52,14 @@ router.post('/', auth, allowRoles('admin', 'superadmin'), validate(resourceReque
   }
 });
 
-// Get requests for my hospital (as receiving hospital)
+// Requests to act on as the supplier. Superadmin sees the whole network (their
+// oversight table); everyone else sees requests addressed to their hospital.
 router.get('/incoming', auth, async (req, res) => {
   try {
-    const hospitalId = req.user.hospitalId;
-    const requests = await ResourceRequest.find({ supplyingHospitalId: hospitalId })
+    const filter = req.user.role === 'superadmin' ? {} : { supplyingHospitalId: req.user.hospitalId };
+    const requests = await ResourceRequest.find(filter)
       .populate('requestingHospitalId', 'name contactPhone')
+      .populate('supplyingHospitalId', 'name contactPhone')
       .sort({ requestedAt: -1 });
     res.json(requests);
   } catch (err) {
@@ -58,11 +67,12 @@ router.get('/incoming', auth, async (req, res) => {
   }
 });
 
-// Get requests I made
+// Requests I made. Superadmin acts from the network table above, so this is
+// empty for them (avoids showing every request twice).
 router.get('/outgoing', auth, async (req, res) => {
   try {
-    const hospitalId = req.user.hospitalId;
-    const requests = await ResourceRequest.find({ requestingHospitalId: hospitalId })
+    if (req.user.role === 'superadmin') return res.json([]);
+    const requests = await ResourceRequest.find({ requestingHospitalId: req.user.hospitalId })
       .populate('supplyingHospitalId', 'name contactPhone')
       .sort({ requestedAt: -1 });
     res.json(requests);
@@ -77,7 +87,8 @@ router.put('/:id/respond', auth, allowRoles('admin', 'superadmin'), async (req, 
     const { status } = req.body; // 'approved' or 'declined'
     const request = await ResourceRequest.findById(req.params.id);
     if (!request) return res.status(404).json({ error: 'Request not found' });
-    if (request.supplyingHospitalId.toString() !== req.user.hospitalId?.toString()) {
+    const isSuper = req.user.role === 'superadmin';
+    if (!isSuper && request.supplyingHospitalId.toString() !== req.user.hospitalId?.toString()) {
       return res.status(403).json({ error: 'Not authorized to respond to this request' });
     }
     if (request.status !== 'pending') {
@@ -114,7 +125,8 @@ router.put('/:id/complete', auth, async (req, res) => {
   try {
     const request = await ResourceRequest.findById(req.params.id);
     if (!request) return res.status(404).json({ error: 'Request not found' });
-    if (request.requestingHospitalId.toString() !== req.user.hospitalId?.toString()) {
+    const isSuper = req.user.role === 'superadmin';
+    if (!isSuper && request.requestingHospitalId.toString() !== req.user.hospitalId?.toString()) {
       return res.status(403).json({ error: 'Not authorized' });
     }
     if (request.status !== 'approved') {
