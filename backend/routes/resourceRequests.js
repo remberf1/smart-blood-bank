@@ -6,6 +6,7 @@ const { auth } = require('../middleware/auth');
 const { allowRoles } = require('../middleware/roles');
 const { validate } = require('../middleware/validate');
 const { resourceRequestSchema } = require('../validators/schemas');
+const { logAudit } = require('../services/auditService');
 // const { sendWhatsAppMessage } = require('../services/whatsappService'); // optional
 
 // Create a request (hospital admin only)
@@ -99,6 +100,11 @@ router.put('/:id/respond', auth, allowRoles('admin', 'superadmin'), async (req, 
     request.respondedAt = Date.now();
     await request.save();
 
+    logAudit(req.user, 'resource-request.respond', {
+      entity: 'ResourceRequest', entityId: request._id,
+      summary: `Request ${status} (${request.units}u ${request.bloodGroup || request.resourceType})`,
+    });
+
     // If approved, automatically deduct from supplying hospital's inventory
     if (status === 'approved') {
       const inventory = await Inventory.findOne({
@@ -135,6 +141,11 @@ router.put('/:id/complete', auth, async (req, res) => {
     request.status = 'completed';
     request.completedAt = Date.now();
     await request.save();
+
+    logAudit(req.user, 'resource-request.complete', {
+      entity: 'ResourceRequest', entityId: request._id,
+      summary: `Received ${request.units}u ${request.bloodGroup || request.resourceType}`,
+    });
 
     // Increase requesting hospital's inventory
     let inventory = await Inventory.findOne({

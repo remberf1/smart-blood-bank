@@ -109,6 +109,18 @@ export default function UsersPage() {
     }
   };
 
+  const deleteUser = async (u: User) => {
+    if (u._id === user?.id) { toast.error('You cannot delete your own account.'); return; }
+    if (!confirm(`Permanently delete ${u.name}? This cannot be undone.`)) return;
+    try {
+      await apiClient.delete(`/auth/users/${u._id}`);
+      toast.success('User deleted');
+      fetchData();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Delete failed');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -176,6 +188,15 @@ export default function UsersPage() {
                       disabled={u._id === user?.id}
                     >
                       {u.isActive ? 'Deactivate' : 'Activate'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => deleteUser(u)}
+                      disabled={u._id === user?.id}
+                      className="text-red-600 border-red-200 hover:bg-red-50"
+                    >
+                      Delete
                     </Button>
                   </TableCell>
                 </TableRow>

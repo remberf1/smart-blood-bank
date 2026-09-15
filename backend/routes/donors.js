@@ -11,6 +11,7 @@ const { addBloodUnits } = require("../services/inventoryService");
 const { refreshDonorEligibility } = require("../services/eligibilityService");
 const { validate } = require("../middleware/validate");
 const { donorRegisterSchema } = require("../validators/schemas");
+const { logAudit } = require("../services/auditService");
 
 // Shared donation-recording logic used by both the QR-scan (/verify) and the
 // direct by-donor (/:donorId/record-donation) paths: gate on eligibility, defer
@@ -30,6 +31,8 @@ async function recordDonationForDonor(donor, hospitalId) {
   donor.lastDonationDate = new Date();
   donor.eligibilityStatus = "deferred";
   donor.deferralReason = "90 days waiting period after donation";
+  // Tag the donor's home hospital on their first recorded donation.
+  if (!donor.homeHospitalId) donor.homeHospitalId = hospitalId;
   await donor.save();
   const units = await addBloodUnits({
     hospitalId,
@@ -188,6 +191,10 @@ router.post("/verify", auth, async (req, res) => {
       const hospitalId = req.user.hospitalId || req.body.hospitalId;
       try {
         const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId);
+        logAudit(req.user, 'donation.record', {
+          entity: 'Donor', entityId: donor._id, hospitalId,
+          summary: `Recorded ${bloodGroup} donation from ${donor.name} (QR)`,
+        });
         return res.json({
           verified: true,
           donationRecorded: true,
@@ -240,6 +247,11 @@ router.post(
 
       const hospitalId = req.user.hospitalId || req.body.hospitalId;
       const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId);
+
+      logAudit(req.user, 'donation.record', {
+        entity: 'Donor', entityId: donor._id, hospitalId,
+        summary: `Recorded ${bloodGroup} donation from ${donor.name}`,
+      });
 
       res.json({
         donationRecorded: true,
@@ -312,7 +324,9 @@ router.get("/:donorId/qrcode", auth, async (req, res) => {
 // Query: ?page=1&limit=20&search=&bloodGroup=&eligibility=
 // Returns { data, page, limit, total, totalPages, stats } where stats reflect
 // the same filter so the summary cards stay in sync with the results.
-router.get("/", auth, isAdmin, async (req, res) => {
+// Staff can view the donor pool too (they record donations); only donor tokens
+// are rejected (by `auth`). Editing eligibility / deleting stays admin-only.
+router.get("/", auth, allowRoles("staff", "admin", "superadmin"), async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
@@ -338,7 +352,7 @@ router.get("/", auth, isAdmin, async (req, res) => {
     const sort = SORTS[req.query.sort] || SORTS.recent;
 
     const [data, total, eligible, deferred, groups] = await Promise.all([
-      Donor.find(filter).select("-qrCode").sort(sort).skip(skip).limit(limit),
+      Donor.find(filter).select("-qrCode").populate("homeHospitalId", "name").sort(sort).skip(skip).limit(limit),
       Donor.countDocuments(filter),
       Donor.countDocuments({ ...filter, eligibilityStatus: "eligible" }),
       Donor.countDocuments({ ...filter, eligibilityStatus: "deferred" }),

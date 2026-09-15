@@ -1,7 +1,38 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const SOSRequest = require('../models/SOSRequest');
 const { auth, isAdmin } = require('../middleware/auth');
+const { triggerSOS } = require('../services/sosService');
+
+// Public emergency trigger — tightly rate-limited to prevent donor-alert spam.
+const sosTriggerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many SOS requests. Please call your nearest hospital directly.' },
+});
+
+// POST /api/sos/trigger  (public) — raise an emergency and alert nearby
+// compatible donors. Needs the requester's location to find donors near them.
+router.post('/trigger', sosTriggerLimiter, async (req, res) => {
+  try {
+    const { bloodGroup, lat, lon, phone } = req.body;
+    const VALID = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+    if (!VALID.includes(bloodGroup)) {
+      return res.status(400).json({ error: 'Select a valid blood group.' });
+    }
+    if (lat == null || lon == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lon))) {
+      return res.status(400).json({ error: 'Your location is required to find nearby donors.' });
+    }
+    const result = await triggerSOS(bloodGroup, Number(lat), Number(lon), phone || '', 15);
+    res.status(201).json(result);
+  } catch (err) {
+    console.error('SOS trigger error:', err);
+    res.status(500).json({ error: 'Could not raise the SOS. Please contact a hospital directly.' });
+  }
+});
 
 // List SOS requests (admin), optionally filtered by status
 router.get('/', auth, isAdmin, async (req, res) => {

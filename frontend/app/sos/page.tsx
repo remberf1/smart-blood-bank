@@ -1,0 +1,157 @@
+'use client';
+import { useEffect, useState } from 'react';
+import apiClient from '../api/client';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Siren, ArrowLeft, MapPin, CheckCircle2, Phone } from 'lucide-react';
+
+const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+
+type Result = { donorsFound: number; donorsAlerted: number; radiusKm: number; widened: boolean };
+
+export default function SosPage() {
+  const [bloodGroup, setBloodGroup] = useState('');
+  const [phone, setPhone] = useState('');
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<Result | null>(null);
+
+  useEffect(() => {
+    const g = new URLSearchParams(window.location.search).get('group');
+    if (g && BLOOD_GROUPS.includes(g)) setBloodGroup(g);
+  }, []);
+
+  const useMyLocation = () => {
+    setLocError('');
+    if (!navigator.geolocation) { setLocError('Location is not available on this device.'); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }); setLocating(false); },
+      () => { setLocError('Could not get your location. Please allow location access.'); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!bloodGroup) { setError('Select the blood group needed.'); return; }
+    if (!coords) { setError('Share your location so we can find donors near you.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await apiClient.post('/sos/trigger', { bloodGroup, lat: coords.lat, lon: coords.lon, phone });
+      setResult(res.data);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Could not raise the SOS. Please contact a hospital directly.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-10 px-4">
+      <div className="max-w-lg mx-auto">
+        <Link href="/" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4">
+          <ArrowLeft className="h-4 w-4" /> Back to home
+        </Link>
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-11 h-11 bg-red-600 rounded-xl flex items-center justify-center shrink-0">
+            <Siren className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Emergency SOS</h1>
+            <p className="text-sm text-gray-500">Alert nearby, compatible blood donors right now</p>
+          </div>
+        </div>
+
+        {result ? (
+          <Card>
+            <CardContent className="p-8 text-center space-y-3">
+              <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto" />
+              {result.donorsFound > 0 ? (
+                <>
+                  <h2 className="text-lg font-bold text-gray-800">Help is on the way</h2>
+                  <p className="text-gray-600">
+                    <strong>{result.donorsAlerted}</strong> compatible donor(s) within{' '}
+                    <strong>{result.radiusKm}km</strong> have been alerted
+                    {result.widened ? ' (search widened to reach donors)' : ''}. If someone accepts, they&apos;ll
+                    be given a way to reach you.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-lg font-bold text-gray-800">No donors found nearby</h2>
+                  <p className="text-gray-600">
+                    We couldn&apos;t reach a compatible donor near you right now. Please contact your nearest
+                    hospital or blood bank directly and keep trying.
+                  </p>
+                </>
+              )}
+              <div className="pt-2">
+                <Link href="/request">
+                  <Button variant="outline">Also submit a blood request</Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-red-600">
+                <Siren className="h-5 w-5" /> Raise an SOS
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                This alerts nearby donors whose blood is compatible with the patient. For a scheduled or
+                non-urgent need, use the <Link href="/request" className="text-primary hover:underline">request form</Link> instead.
+              </p>
+              {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+              <form onSubmit={submit} className="space-y-4">
+                <div>
+                  <Label>Blood group needed *</Label>
+                  <select
+                    value={bloodGroup}
+                    onChange={(e) => setBloodGroup(e.target.value)}
+                    className="w-full border border-input rounded-md p-2 bg-card focus:outline-none focus:ring-2 focus:ring-red-500"
+                    required
+                  >
+                    <option value="">Select group</option>
+                    {BLOOD_GROUPS.map((bg) => <option key={bg} value={bg}>{bg}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label>Your phone (so a donor can reach you)</Label>
+                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08012345678" inputMode="tel" />
+                </div>
+                <div>
+                  <Label>Your location *</Label>
+                  <div className="flex items-center gap-3 mt-1">
+                    <Button type="button" variant="outline" onClick={useMyLocation} disabled={locating}>
+                      <MapPin className="h-4 w-4 mr-1" /> {locating ? 'Locating…' : coords ? 'Update location' : 'Use my location'}
+                    </Button>
+                    {coords && (
+                      <span className="text-sm text-emerald-600 inline-flex items-center gap-1">
+                        <CheckCircle2 className="h-4 w-4" /> Location captured
+                      </span>
+                    )}
+                  </div>
+                  {locError && <p className="text-red-500 text-xs mt-1">{locError}</p>}
+                </div>
+                <Button type="submit" className="w-full bg-red-600 hover:bg-red-700" disabled={submitting || !coords}>
+                  <Siren className="h-4 w-4 mr-1" /> {submitting ? 'Alerting donors…' : 'Send emergency SOS'}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}

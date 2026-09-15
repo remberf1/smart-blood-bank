@@ -443,11 +443,16 @@ export default function InventoryPage() {
                       title={lvl === "out" ? "Unavailable" : `${g.units} units`}
                     >
                       <div className="text-sm font-bold">{g.bloodGroup}</div>
-                      <div className="text-xs">{lvl === "out" ? "—" : `${g.units}u`}</div>
+                      <div className="text-xs">{lvl === "out" ? "Out" : `${g.units}u`}</div>
                     </button>
                   );
                 })}
               </div>
+              {groupTotals.some((g) => g.units === 0) && (
+                <p className="text-xs text-red-600 mt-3">
+                  Unavailable: {groupTotals.filter((g) => g.units === 0).map((g) => g.bloodGroup).join(", ")}
+                </p>
+              )}
             </CardContent>
           </Card>
 

@@ -35,6 +35,9 @@ export default function Home() {
         </div>
 
         <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 justify-center text-sm">
+          <Link href="/sos" className="text-red-600 font-medium hover:underline">
+            🚨 Emergency SOS
+          </Link>
           <Link href="/track" className="text-gray-600 hover:text-red-600 hover:underline">
             Track a request
           </Link>

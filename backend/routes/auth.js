@@ -7,6 +7,7 @@ const { validate } = require('../middleware/validate');
 const { loginSchema, registerUserSchema, updateUserSchema, forgotPasswordSchema, resetPasswordSchema } = require('../validators/schemas');
 const { notifyNewUser, sendEmail, buildPasswordResetEmail } = require('../services/notificationService');
 const { generateResetToken, hashToken } = require('../utils/passwordReset');
+const { logAudit } = require('../services/auditService');
 
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
@@ -27,6 +28,11 @@ router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async
 
     // Best-effort welcome email.
     notifyNewUser(user).catch(() => {});
+
+    logAudit(req.user, 'user.create', {
+      entity: 'User', entityId: user._id,
+      summary: `Created ${user.role} ${user.email}`,
+    });
 
     // Create token
     const token = jwt.sign(
@@ -76,7 +82,13 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     // Update last login
     user.lastLogin = new Date();
     await user.save();
-    
+
+    logAudit(
+      { userId: user._id, email: user.email, role: user.role, hospitalId: user.hospitalId },
+      'auth.login',
+      { entity: 'User', entityId: user._id, summary: `${user.email} signed in` }
+    );
+
     // Create token
     const token = jwt.sign(
       { userId: user._id, email: user.email, role: user.role, hospitalId: user.hospitalId },
@@ -163,12 +175,34 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
+// ==================== UPDATE OWN PROFILE (name) ====================
+router.put('/me', auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required.' });
+    }
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { name: name.trim() },
+      { new: true }
+    ).select('-password').populate('hospitalId', 'name');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ==================== CHANGE PASSWORD ====================
 router.post('/change-password', auth, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+    }
     const user = await User.findById(req.user.userId);
-    
+
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       return res.status(401).json({ error: 'Current password is incorrect' });
@@ -223,7 +257,39 @@ router.put('/users/:id', auth, isSuperAdmin, validate(updateUserSchema), async (
       .select('-password')
       .populate('hospitalId', 'name');
     if (!user) return res.status(404).json({ error: 'User not found' });
+    logAudit(req.user, 'user.update', {
+      entity: 'User', entityId: user._id,
+      summary: `Updated ${user.email}`, meta: update,
+    });
     res.json(user);
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== DELETE USER (Super Admin only) ====================
+router.delete('/users/:id', auth, isSuperAdmin, async (req, res) => {
+  try {
+    if (req.params.id === req.user.userId) {
+      return res.status(400).json({ error: 'You cannot delete your own account.' });
+    }
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    // Never remove the last superadmin (would lock everyone out of admin).
+    if (target.role === 'superadmin') {
+      const supers = await User.countDocuments({ role: 'superadmin' });
+      if (supers <= 1) {
+        return res.status(400).json({ error: 'Cannot delete the last superadmin.' });
+      }
+    }
+
+    await User.findByIdAndDelete(req.params.id);
+    logAudit(req.user, 'user.delete', {
+      entity: 'User', entityId: target._id,
+      summary: `Deleted ${target.role} ${target.email}`,
+    });
+    res.json({ message: 'User deleted' });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
   }

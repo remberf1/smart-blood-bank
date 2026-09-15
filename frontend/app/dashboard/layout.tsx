@@ -1,9 +1,10 @@
 'use client';
 import { useAuth } from '../contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import apiClient from '../api/client';
 import Link from 'next/link';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, toast } from 'react-hot-toast';
 import {
   LayoutDashboard,
   Droplet,
@@ -18,22 +19,29 @@ import {
   HeartPulse,
   CalendarCheck,
   Siren,
+  ScrollText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+// `roles` lists who may see (and act on) each tab — mirroring what the backend
+// actually permits, so a role never sees a tab that only 403s for them.
+const STAFF = ['staff', 'admin', 'superadmin'];
+const ADMIN = ['admin', 'superadmin'];
+const SUPER = ['superadmin'];
 const navItems = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Inventory', href: '/dashboard/inventory', icon: Droplet },
-  { name: 'Donors', href: '/dashboard/donors', icon: Users },
-  { name: 'Appointments', href: '/dashboard/appointments', icon: CalendarCheck },
-  { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2 },
-  { name: 'Patient Requests', href: '/dashboard/patient-requests', icon: HeartPulse },
-  { name: 'SOS', href: '/dashboard/sos', icon: Siren, adminOnly: true },
-   { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft },
-  { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
-  { name: 'Forecast', href: '/dashboard/forecast', icon: TrendingUp },
-  { name: 'Users', href: '/dashboard/users', icon: UserCog, superadminOnly: true },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: STAFF },
+  { name: 'Inventory', href: '/dashboard/inventory', icon: Droplet, roles: STAFF, badgeKey: 'lowStock' }, // staff add/update
+  { name: 'Donors', href: '/dashboard/donors', icon: Users, roles: STAFF }, // staff record donations
+  { name: 'Appointments', href: '/dashboard/appointments', icon: CalendarCheck, roles: STAFF, badgeKey: 'appointments' },
+  { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3, roles: STAFF },
+  { name: 'Forecast', href: '/dashboard/forecast', icon: TrendingUp, roles: STAFF },
+  { name: 'Patient Requests', href: '/dashboard/patient-requests', icon: HeartPulse, roles: ADMIN, badgeKey: 'patientRequests' }, // approve/assign
+  { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft, roles: ADMIN, badgeKey: 'resourceRequests' },
+  { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2, roles: ADMIN },
+  { name: 'SOS', href: '/dashboard/sos', icon: Siren, roles: ADMIN, badgeKey: 'sos' },
+  { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: SUPER },
+  { name: 'Audit Log', href: '/dashboard/audit', icon: ScrollText, roles: SUPER },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -41,6 +49,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [badges, setBadges] = useState<Record<string, number>>({});
+  const prevSos = useRef<number | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -51,6 +61,50 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
+
+  // Poll "needs attention" counts for the sidebar badges, and raise a toast when
+  // a NEW emergency SOS appears — the in-app alert for urgent matters.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const load = async () => {
+      try {
+        const r = await apiClient.get('/badges');
+        if (!active) return;
+        setBadges(r.data);
+        const sos = r.data.sos || 0;
+        if (prevSos.current !== null && sos > prevSos.current) {
+          toast('🚨 New emergency SOS — check the SOS tab.', { icon: '🚨', duration: 8000 });
+        }
+        prevSos.current = sos;
+      } catch { /* ignore transient errors */ }
+    };
+    load();
+    const id = setInterval(load, 45000);
+    return () => { active = false; clearInterval(id); };
+  }, [user]);
+
+  // Auto sign-out after a period of inactivity (security: unattended dashboards).
+  useEffect(() => {
+    if (!user) return;
+    const IDLE_MS = 30 * 60 * 1000; // 30 minutes
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        toast('Signed out due to inactivity.', { icon: '🔒' });
+        logout();
+        router.push('/login');
+      }, IDLE_MS);
+    };
+    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+  }, [user, logout, router]);
 
   if (loading) {
     return (
@@ -96,7 +150,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
               <div className="leading-tight">
                 <h1 className="text-[15px] font-bold text-foreground">Smart Blood Bank</h1>
-                <p className="text-[11px] text-muted-foreground">Admin dashboard</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {user.role === 'superadmin' ? 'Super admin' : user.role === 'admin' ? 'Admin dashboard' : 'Staff dashboard'}
+                </p>
               </div>
             </div>
           </div>
@@ -106,11 +162,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Menu</p>
             <div className="space-y-0.5">
               {navItems
-                .filter((item) => !(item as any).superadminOnly || user.role === 'superadmin')
-                .filter((item) => !(item as any).adminOnly || user.role === 'admin' || user.role === 'superadmin')
+                .filter((item) => !item.roles || item.roles.includes(user.role))
                 .map((item) => {
                   const isActive = pathname === item.href;
                   const Icon = item.icon;
+                  const badgeKey = (item as any).badgeKey as string | undefined;
+                  const count = badgeKey ? badges[badgeKey] || 0 : 0;
+                  // SOS = loud red (urgent); low stock = amber (caution); rest = calm.
+                  const badgeClass =
+                    badgeKey === 'sos'
+                      ? 'bg-red-600 text-white animate-pulse'
+                      : badgeKey === 'lowStock'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-primary/15 text-primary';
                   return (
                     <Link
                       key={item.href}
@@ -124,7 +188,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     >
                       {isActive && <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-full bg-primary" />}
                       <Icon className={cn("h-4 w-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
-                      <span>{item.name}</span>
+                      <span className="flex-1">{item.name}</span>
+                      {count > 0 && (
+                        <span
+                          className={cn(
+                            "ml-auto min-w-5 h-5 px-1.5 rounded-full text-xs font-semibold flex items-center justify-center",
+                            badgeClass
+                          )}
+                        >
+                          {count > 99 ? '99+' : count}
+                        </span>
+                      )}
                     </Link>
                   );
                 })}
@@ -133,7 +207,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* User Info & Logout */}
           <div className="p-3 border-t border-border">
-            <div className="flex items-center gap-3 rounded-lg px-2 py-2 mb-2">
+            <Link
+              href="/dashboard/profile"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center gap-3 rounded-lg px-2 py-2 mb-2 hover:bg-muted/60 transition-colors"
+              title="My profile"
+            >
               <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                 <span className="text-primary text-sm font-semibold">{initials}</span>
               </div>
@@ -141,7 +220,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
                 <p className="text-xs text-muted-foreground truncate">{user.email}</p>
               </div>
-            </div>
+            </Link>
             <button
               onClick={logout}
               className="w-full flex items-center justify-center gap-2 rounded-lg border border-destructive/25 px-4 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"

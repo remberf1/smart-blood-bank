@@ -72,6 +72,7 @@ interface Donor {
   deferralReason?: string;
   lastDonationDate: string;
   createdAt: string;
+  homeHospitalId?: { name: string } | null;
 }
 
 const PAGE_SIZE = 20;
@@ -342,15 +343,16 @@ export default function DonorsPage() {
                   <TableHead>
                     <SortHead label="Registered" col="registered" sort={sort} onSort={toggleSort} />
                   </TableHead>
+                  <TableHead>Home Hospital</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={7}><Loading label="Loading donors…" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8}><Loading label="Loading donors…" /></TableCell></TableRow>
                 ) : donors.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7}>
+                    <TableCell colSpan={8}>
                       <EmptyState
                         icon={Users}
                         title={searchTerm ? 'No donors match your search' : 'No donors registered yet'}
@@ -409,6 +411,9 @@ export default function DonorsPage() {
                             <Calendar className="h-3 w-3" />
                             {new Date(donor.createdAt).toLocaleDateString()}
                           </div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {donor.homeHospitalId?.name || <span className="text-muted-foreground/60">—</span>}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">

@@ -300,6 +300,28 @@ If you didn't request this, you can safely ignore this email — your password w
   return { subject: 'Reset your Smart Blood Bank password', text, html };
 }
 
+function buildSosAlertEmail({ bloodGroup, radiusKm, lat, lon }) {
+  const mapUrl = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+  const text = `Smart Blood Bank — EMERGENCY SOS
+
+An emergency request for ${bloodGroup} blood was raised near your hospital (within ~${radiusKm}km).
+Compatible donors have been alerted. Please check stock and be ready to help.
+${mapUrl ? `Location: ${mapUrl}` : ''}
+
+Open the dashboard → SOS to see details.`;
+  const html = renderEmail({
+    emoji: '🚨',
+    accent: '#c2283b',
+    heading: `Emergency SOS — ${bloodGroup} needed nearby`,
+    paragraphs: [
+      `An emergency request for ${bloodGroup} blood was raised within about ${radiusKm}km of your hospital.`,
+      'Compatible donors have already been alerted. Please check your stock and be ready to assist.',
+    ],
+    cta: mapUrl ? { label: 'View location', url: mapUrl } : undefined,
+  });
+  return { subject: `🚨 Emergency SOS — ${bloodGroup} needed nearby`, text, html };
+}
+
 function buildWelcomeEmail(user) {
   const name = user.name ? `Hi ${user.name},` : 'Hello,';
   const text = `${name}
@@ -404,4 +426,5 @@ module.exports = {
   buildAppointmentReminderEmail,
   buildWelcomeEmail,
   buildPasswordResetEmail,
+  buildSosAlertEmail,
 };

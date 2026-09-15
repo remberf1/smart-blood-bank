@@ -110,6 +110,8 @@ const sosRoutes = require('./routes/sos');
 const analyticsRoutes = require('./routes/analytics');
 const appointmentRoutes = require('./routes/appointments');
 const forecastRoutes = require('./routes/forecast');
+const auditRoutes = require('./routes/audit');
+const badgeRoutes = require('./routes/badges');
 
 // Mount routes
 app.use('/api/inventory', inventoryRoutes);
@@ -125,6 +127,8 @@ app.use('/api/sos', sosRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/forecast', forecastRoutes);
+app.use('/api/audit', auditRoutes);
+app.use('/api/badges', badgeRoutes);
 
 // Simple health check
 app.get('/', (req, res) => {

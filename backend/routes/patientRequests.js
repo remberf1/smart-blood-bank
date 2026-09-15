@@ -8,6 +8,7 @@ const { auth } = require("../middleware/auth");
 const { allowRoles, canAccessHospital } = require("../middleware/roles");
 const { validate } = require("../middleware/validate");
 const { patientRequestSchema } = require("../validators/schemas");
+const { logAudit } = require("../services/auditService");
 
 // ------------------- Public (no authentication) -------------------
 // Create a new request (supports advance scheduling)
@@ -169,6 +170,10 @@ router.put("/:id/status", auth, allowRoles("admin", "superadmin"), async (req, r
     // Best-effort: notify the patient when the status actually changed.
     if (deliveryStatus !== previousStatus) {
       notifyRequestStatus(request).catch(() => {});
+      logAudit(req.user, 'patient-request.status', {
+        entity: 'PatientRequest', entityId: request._id,
+        summary: `${request.resourceType}${request.bloodGroup ? ` ${request.bloodGroup}` : ''} → ${deliveryStatus}`,
+      });
     }
 
     res.json(request);

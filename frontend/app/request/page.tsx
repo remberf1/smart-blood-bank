@@ -172,6 +172,21 @@ export default function PublicRequestPage() {
                   </div>
                 </div>
 
+                {form.urgency === 'emergency' && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm">
+                    <p className="text-red-800 font-medium">Is this a life-threatening emergency?</p>
+                    <p className="text-red-700 mt-0.5">
+                      Raising an SOS alerts nearby compatible donors immediately — faster than a standard request.
+                    </p>
+                    <Link
+                      href={`/sos${form.resourceType === 'blood' && form.bloodGroup ? `?group=${encodeURIComponent(form.bloodGroup)}` : ''}`}
+                      className="mt-2 inline-flex items-center justify-center h-9 px-4 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+                    >
+                      Raise an emergency SOS
+                    </Link>
+                  </div>
+                )}
+
                 <div>
                   <Label>Preferred hospital (optional)</Label>
                   <select

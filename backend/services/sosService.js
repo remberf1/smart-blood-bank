@@ -2,8 +2,42 @@ require('dotenv').config();
 const twilio = require('twilio');
 const Donor = require('../models/Donor');
 const SOSRequest = require('../models/SOSRequest');
+const Hospital = require('../models/Hospital');
+const User = require('../models/User');
 const { normalizePhone } = require('../utils/phone');
 const { getCompatibleDonors } = require('../utils/bloodCompatibility');
+const { sendEmail, buildSosAlertEmail } = require('./notificationService');
+
+// Email the admins of hospitals near an SOS so they can mobilise stock. Best-
+// effort and never throws — admin alerting must not break the SOS itself.
+async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
+  try {
+    const nearby = await Hospital.find({
+      location: {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [lon, lat] },
+          $maxDistance: radiusKm * 1000, // km -> metres
+        },
+      },
+    }).select('_id').limit(15);
+    if (!nearby.length) return;
+
+    const admins = await User.find({
+      role: 'admin',
+      isActive: true,
+      hospitalId: { $in: nearby.map((h) => h._id) },
+    }).select('email');
+    if (!admins.length) return;
+
+    const e = buildSosAlertEmail({ bloodGroup, radiusKm, lat, lon });
+    for (const a of admins) {
+      if (a.email) sendEmail(a.email, e.subject, e.text, e.html).catch(() => {});
+    }
+    console.log(`📧 SOS: alerted ${admins.length} hospital admin(s) near the request`);
+  } catch (err) {
+    console.error('SOS admin alert failed:', err.message);
+  }
+}
 
 const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -98,6 +132,9 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
   }
 
   await sos.save();
+
+  // Also alert the admins of nearby hospitals (best-effort, fire-and-forget).
+  alertNearbyHospitalAdmins(bloodGroup, userLat, userLon, effectiveRadius);
 
   console.log(`📊 SOS Result: ${alertedCount} of ${donorsWithDistance.length} donors alerted`);
 

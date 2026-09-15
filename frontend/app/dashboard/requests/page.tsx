@@ -122,7 +122,10 @@ export default function ResourceRequestsPage() {
     if (formData.resourceType === "blood" && formData.bloodGroup) {
       const supplierIds = inventory
         .filter(
-          (item) => item.bloodGroup === formData.bloodGroup && item.units > 0,
+          (item) =>
+            item.hospitalId && // guard: a deleted hospital leaves a null ref
+            item.bloodGroup === formData.bloodGroup &&
+            item.units > 0,
         )
         .map((item) =>
           typeof item.hospitalId === "string"

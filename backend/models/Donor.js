@@ -27,6 +27,10 @@ const donorSchema = new mongoose.Schema({
   },
   deferralReason: { type: String },
   qrCode: { type: String },
+  // Informational "home" hospital — the one that registered them or took their
+  // first donation. Donors remain a shared pool (visible to all staff, alertable
+  // by SOS regardless of hospital); this is a tag, not an access boundary.
+  homeHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: "Hospital" },
   notes: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

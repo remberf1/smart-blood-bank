@@ -64,6 +64,7 @@ export default function DashboardHome() {
   const [hospitals, setHospitals] = useState(0);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -74,8 +75,10 @@ export default function DashboardHome() {
         ]);
         setHospitals(h.data.length);
         setSummary(s.data);
+        setLoadError(false);
       } catch (error) {
         console.error('Error fetching dashboard:', error);
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -96,11 +99,12 @@ export default function DashboardHome() {
   const stockMax = Math.max(1, ...stock.map((s) => s.units));
   const lowGroups = stock.filter((s) => s.units < LOW_STOCK).map((s) => s.bloodGroup);
 
+  const isAdmin = user?.role === 'admin' || isSuperadmin;
   const links = [
     { name: 'Inventory', href: '/dashboard/inventory', icon: Boxes },
     { name: 'Donors', href: '/dashboard/donors', icon: Users },
-    { name: 'Requests', href: '/dashboard/requests', icon: ArrowRightLeft },
     { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+    ...(isAdmin ? [{ name: 'Requests', href: '/dashboard/requests', icon: ArrowRightLeft }] : []),
     ...(isSuperadmin ? [{ name: 'Users', href: '/dashboard/users', icon: UserCog }] : []),
   ];
 
@@ -110,6 +114,15 @@ export default function DashboardHome() {
         <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
         <p className="text-muted-foreground mt-1">Welcome back, {user?.name}</p>
       </div>
+
+      {loadError && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="p-4 text-sm text-amber-800 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            Some dashboard data couldn&apos;t be loaded. Showing what&apos;s available — try refreshing.
+          </CardContent>
+        </Card>
+      )}
 
       {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
