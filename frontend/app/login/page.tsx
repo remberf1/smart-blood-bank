@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Droplet } from 'lucide-react';
+import { Droplet, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
 export default function LoginPage() {
@@ -28,9 +28,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <Toaster position="top-right" toastOptions={{ duration: 5000, error: { duration: 6500 } }} />
-      <Card className="w-full max-w-md shadow-lg">
+      <div className="w-full max-w-md">
+        <Link href="/" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4">
+          <ArrowLeft className="h-4 w-4" /> Back to home
+        </Link>
+        <Card className="w-full shadow-lg">
         <CardHeader className="text-center space-y-2">
           <div className="mx-auto w-12 h-12 bg-primary rounded-xl flex items-center justify-center">
             <Droplet className="h-6 w-6 text-primary-foreground" />
@@ -78,7 +82,8 @@ export default function LoginPage() {
             </div>
           )}
         </CardContent>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 }

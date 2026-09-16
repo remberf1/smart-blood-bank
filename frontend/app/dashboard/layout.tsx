@@ -82,7 +82,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     load();
     const id = setInterval(load, 45000);
     return () => { active = false; clearInterval(id); };
-  }, [user]);
+    // Re-runs on navigation too, so counts refresh right after you act on something.
+  }, [user, pathname]);
 
   // Auto sign-out after a period of inactivity (security: unattended dashboards).
   useEffect(() => {

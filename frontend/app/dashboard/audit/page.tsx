@@ -38,7 +38,11 @@ export default function AuditPage() {
   const isSuperadmin = user?.role === 'superadmin';
   const [entries, setEntries] = useState<Entry[]>([]);
   const [actions, setActions] = useState<string[]>([]);
+  const [entities, setEntities] = useState<string[]>([]);
   const [actionFilter, setActionFilter] = useState('');
+  const [entityFilter, setEntityFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [actorSearch, setActorSearch] = useState('');
   const [debouncedActor, setDebouncedActor] = useState('');
   const [page, setPage] = useState(1);
@@ -51,23 +55,30 @@ export default function AuditPage() {
     return () => clearTimeout(t);
   }, [actorSearch]);
 
-  useEffect(() => { setPage(1); }, [actionFilter]);
+  useEffect(() => { setPage(1); }, [actionFilter, entityFilter, fromDate, toDate]);
 
   useEffect(() => {
     if (!isSuperadmin) { setLoading(false); return; }
     setLoading(true);
     apiClient
-      .get('/audit', { params: { page, limit: PAGE_SIZE, action: actionFilter || undefined, actor: debouncedActor || undefined } })
+      .get('/audit', { params: {
+        page, limit: PAGE_SIZE,
+        action: actionFilter || undefined,
+        entity: entityFilter || undefined,
+        actor: debouncedActor || undefined,
+        from: fromDate || undefined,
+        to: toDate || undefined,
+      } })
       .then((r) => {
         setEntries(r.data.data);
         setActions(r.data.actions || []);
+        setEntities(r.data.entities || []);
         setTotalPages(r.data.totalPages);
         setTotal(r.data.total);
       })
       .catch(() => toast.error('Failed to load audit log'))
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, actionFilter, debouncedActor, isSuperadmin]);
+  }, [page, actionFilter, entityFilter, debouncedActor, fromDate, toDate, isSuperadmin]);
 
   if (!isSuperadmin) {
     return (
@@ -99,9 +110,24 @@ export default function AuditPage() {
           <option value="">All actions</option>
           {actions.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
-        {(actionFilter || actorSearch) && (
+        <select
+          value={entityFilter}
+          onChange={(e) => setEntityFilter(e.target.value)}
+          className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
+        >
+          <option value="">All entities</option>
+          {entities.map((e) => <option key={e} value={e}>{e}</option>)}
+        </select>
+        <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+          <span>–</span>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+        </label>
+        {(actionFilter || entityFilter || actorSearch || fromDate || toDate) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground"
-            onClick={() => { setActionFilter(''); setActorSearch(''); }}>
+            onClick={() => { setActionFilter(''); setEntityFilter(''); setActorSearch(''); setFromDate(''); setToDate(''); }}>
             Clear
           </Button>
         )}

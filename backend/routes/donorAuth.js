@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const QRCode = require('qrcode');
 const Donor = require('../models/Donor');
 const { validate } = require('../middleware/validate');
 const { forgotPasswordSchema, resetPasswordSchema } = require('../validators/schemas');
@@ -108,24 +109,24 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
 });
 
 // ==================== GET DONOR PROFILE (Protected) ====================
-router.get('/profile', async (req, res) => {
+router.get('/profile', authDonor, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'No token provided' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== 'donor') {
-      return res.status(403).json({ error: 'Access denied' });
+    if (!req.donor.qrCode) {
+      const qrToken = jwt.sign(
+        { donorId: req.donor._id, type: 'donor-verify' },
+        process.env.JWT_SECRET
+      );
+      req.donor.qrCode = await QRCode.toDataURL(qrToken, {
+        errorCorrectionLevel: 'H',
+        margin: 1,
+        width: 300,
+      });
+      await req.donor.save();
     }
-
-    const donor = await Donor.findById(decoded.donorId)
-      .select('-password -qrCode'); // exclude sensitive fields
-    if (!donor) return res.status(404).json({ error: 'Donor not found' });
-
-    res.json(donor);
+    res.json(req.donor);
   } catch (err) {
-    console.error('Profile fetch error:', err);
-    res.status(401).json({ error: 'Invalid or expired token' });
+    console.error('Error generating donor QR in profile:', err);
+    res.json(req.donor);
   }
 });
 
@@ -133,7 +134,7 @@ router.get('/profile', async (req, res) => {
 router.put('/profile', authDonor, async (req, res) => {
   try {
     const donor = req.donor; // full doc loaded by authDonor (password excluded)
-    const { name, phone, email, sosOptIn } = req.body;
+    const { name, phone, email, sosOptIn, location, allergies } = req.body;
 
     if (email && email !== donor.email) {
       const exists = await Donor.findOne({ email, _id: { $ne: donor._id } });
@@ -150,6 +151,13 @@ router.put('/profile', authDonor, async (req, res) => {
     }
     if (typeof name === 'string' && name.trim()) donor.name = name.trim();
     if (typeof sosOptIn === 'boolean') donor.sosOptIn = sosOptIn;
+    if (typeof allergies === 'string') donor.allergies = allergies.trim();
+    if (location && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
+      const [lng, lat] = location.coordinates.map(Number);
+      if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+        donor.location = { type: 'Point', coordinates: [lng, lat] };
+      }
+    }
 
     await donor.save(); // password not modified → not re-hashed
     res.json({
@@ -162,6 +170,8 @@ router.put('/profile', authDonor, async (req, res) => {
         bloodGroup: donor.bloodGroup,
         eligibilityStatus: donor.eligibilityStatus,
         sosOptIn: donor.sosOptIn,
+        location: donor.location,
+        allergies: donor.allergies,
       },
     });
   } catch (err) {

@@ -105,7 +105,7 @@ async function refreshBloodInventory(hospitalId, bloodGroup) {
   ]);
   const units = agg[0]?.units || 0;
   await Inventory.findOneAndUpdate(
-    { hospitalId, resourceType: 'blood', bloodGroup },
+    { hospitalId: toObjectId(hospitalId), resourceType: 'blood', bloodGroup },
     { $set: { units, lastUpdatedAt: now } },
     { upsert: true }
   );
@@ -119,11 +119,12 @@ async function addBloodUnits({ hospitalId, bloodGroup, units, donorId = null, so
   }
   const now = new Date();
   await BloodBatch.create({
-    hospitalId,
+    hospitalId: toObjectId(hospitalId),
     bloodGroup,
-    donorId,
+    donorId: donorId ? toObjectId(donorId) : null,
     source,
     units,
+    initialUnits: units,
     collectionDate: now,
     expiryDate: new Date(now.getTime() + SHELF_LIFE_DAYS * DAY_MS),
     status: 'available',
@@ -138,7 +139,7 @@ async function addBloodUnits({ hospitalId, bloodGroup, units, donorId = null, so
 async function removeBloodUnits({ hospitalId, bloodGroup, units }) {
   const now = new Date();
   const batches = await BloodBatch.find({
-    hospitalId,
+    hospitalId: toObjectId(hospitalId),
     bloodGroup,
     status: 'available',
     expiryDate: { $gt: now },
@@ -170,7 +171,7 @@ async function consumeBloodFEFO({ hospitalId, bloodGroup, units }) {
   if (preference.length === 0) return { ok: false, shortfall: units };
 
   const batches = await BloodBatch.find({
-    hospitalId,
+    hospitalId: toObjectId(hospitalId),
     bloodGroup: { $in: preference },
     status: 'available',
     expiryDate: { $gt: now },

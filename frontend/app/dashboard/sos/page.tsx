@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../api/client';
 import { toast } from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { PageHeader } from '@/components/ui/page-header';
 import { Loading, EmptyState } from '@/components/ui/states';
-import { Siren, Phone, MapPin, Droplet, Clock, CheckCircle2, Users } from 'lucide-react';
+import { Siren, Phone, MapPin, Droplet, CheckCircle2, Users } from 'lucide-react';
 
 interface DonorRef { _id?: string; name?: string; phone?: string; bloodGroup?: string }
 interface Alerted { donorId?: DonorRef | string; phone: string; status: string }
@@ -47,7 +47,7 @@ export default function SosPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
     setLoading(true);
     try {
       const r = await apiClient.get('/sos', { params: { status: status || undefined } });
@@ -57,9 +57,11 @@ export default function SosPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [status]);
 
-  useEffect(() => { fetchList(); /* eslint-disable-next-line */ }, [status]);
+  useEffect(() => {
+    fetchList();
+  }, [fetchList]);
 
   const openDetail = async (id: string) => {
     setDetailLoading(true);

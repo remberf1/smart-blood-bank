@@ -9,13 +9,13 @@
     "dedupe:inventory": "node scripts/dedupeInventory.js",
     "backfill:batches": "node scripts/backfillBloodBatches.js",
     "seed:admin": "node scripts/seedAdmin.js",
-    "seed:donors": "node scripts/seedDonors.js"
+    "seed:donors": "node scripts/seedDonors.js",
+    "ml": "cd ../ml-service && uvicorn app:app --port 8100 --reload"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

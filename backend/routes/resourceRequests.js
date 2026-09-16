@@ -7,10 +7,11 @@ const { allowRoles } = require('../middleware/roles');
 const { validate } = require('../middleware/validate');
 const { resourceRequestSchema } = require('../validators/schemas');
 const { logAudit } = require('../services/auditService');
-// const { sendWhatsAppMessage } = require('../services/whatsappService'); // optional
+const { addBloodUnits, removeBloodUnits } = require('../services/inventoryService');
+const { allocateBlood, allocateOxygen } = require('../services/allocationService');
 
-// Create a request (hospital admin only)
-router.post('/', auth, allowRoles('admin', 'superadmin'), validate(resourceRequestSchema), async (req, res) => {
+// Create a request (hospital admin & staff)
+router.post('/', auth, allowRoles('admin', 'superadmin', 'staff'), validate(resourceRequestSchema), async (req, res) => {
   try {
     const { supplyingHospitalId, resourceType, bloodGroup, units, notes } = req.body;
     // Admin/staff request on behalf of their own hospital; superadmin must say
@@ -23,22 +24,33 @@ router.post('/', auth, allowRoles('admin', 'superadmin'), validate(resourceReque
       return res.status(400).json({ error: 'A hospital cannot request from itself.' });
     }
 
-    // Optional: check if supplying hospital actually has enough stock
-    const inventory = await Inventory.findOne({
-      hospitalId: supplyingHospitalId,
-      resourceType,
-      bloodGroup,
-      units: { $gte: units }
-    });
-    if (!inventory) {
-      return res.status(400).json({ error: 'Supplying hospital does not have enough stock' });
+    // Verify supplying hospital actually has enough stock
+    if (resourceType === 'blood') {
+      const inventory = await Inventory.findOne({
+        hospitalId: supplyingHospitalId,
+        resourceType: 'blood',
+        bloodGroup,
+        units: { $gte: units }
+      });
+      if (!inventory) {
+        return res.status(400).json({ error: 'Supplying hospital does not have enough blood stock' });
+      }
+    } else if (resourceType === 'oxygen') {
+      const inventory = await Inventory.findOne({
+        hospitalId: supplyingHospitalId,
+        resourceType: 'oxygen',
+        oxygenCylinderCount: { $gte: units }
+      });
+      if (!inventory) {
+        return res.status(400).json({ error: 'Supplying hospital does not have enough oxygen cylinders in stock' });
+      }
     }
 
     const request = new ResourceRequest({
       requestingHospitalId,
       supplyingHospitalId,
       resourceType,
-      bloodGroup,
+      bloodGroup: resourceType === 'blood' ? bloodGroup : undefined,
       units,
       notes,
     });
@@ -107,17 +119,26 @@ router.put('/:id/respond', auth, allowRoles('admin', 'superadmin'), async (req, 
 
     // If approved, automatically deduct from supplying hospital's inventory
     if (status === 'approved') {
-      const inventory = await Inventory.findOne({
-        hospitalId: request.supplyingHospitalId,
-        resourceType: request.resourceType,
-        bloodGroup: request.bloodGroup,
-      });
-      if (inventory) {
-        inventory.units -= request.units;
-        await inventory.save();
+      if (request.resourceType === 'blood') {
+        const shortfall = await removeBloodUnits({
+          hospitalId: request.supplyingHospitalId,
+          bloodGroup: request.bloodGroup,
+          units: request.units,
+        });
+        if (shortfall > 0) {
+          console.warn(`Supplying hospital had shortfall of ${shortfall} units during blood transfer approval`);
+        }
+      } else {
+        const inventory = await Inventory.findOne({
+          hospitalId: request.supplyingHospitalId,
+          resourceType: 'oxygen',
+        });
+        if (inventory) {
+          inventory.oxygenCylinderCount = Math.max(0, (inventory.oxygenCylinderCount || 0) - request.units);
+          inventory.lastUpdatedAt = Date.now();
+          await inventory.save();
+        }
       }
-      // Optionally, add to requesting hospital's inventory? Usually the requesting hospital receives the physical units, so you might want to increase their stock.
-      // But better to let the requesting hospital manually add after delivery. Or automate both.
     }
 
     res.json(request);
@@ -148,23 +169,34 @@ router.put('/:id/complete', auth, async (req, res) => {
     });
 
     // Increase requesting hospital's inventory
-    let inventory = await Inventory.findOne({
-      hospitalId: request.requestingHospitalId,
-      resourceType: request.resourceType,
-      bloodGroup: request.bloodGroup,
-    });
-    if (inventory) {
-      inventory.units += request.units;
-      await inventory.save();
-    } else {
-      // create new inventory record
-      inventory = new Inventory({
+    if (request.resourceType === 'blood') {
+      await addBloodUnits({
         hospitalId: request.requestingHospitalId,
-        resourceType: request.resourceType,
         bloodGroup: request.bloodGroup,
         units: request.units,
+        source: 'manual',
       });
-      await inventory.save();
+      allocateBlood().catch(console.error);
+    } else {
+      let inventory = await Inventory.findOne({
+        hospitalId: request.requestingHospitalId,
+        resourceType: 'oxygen',
+      });
+      if (inventory) {
+        inventory.oxygenCylinderCount = (inventory.oxygenCylinderCount || 0) + request.units;
+        inventory.lastUpdatedAt = Date.now();
+        await inventory.save();
+      } else {
+        inventory = new Inventory({
+          hospitalId: request.requestingHospitalId,
+          resourceType: 'oxygen',
+          oxygenCylinderCount: request.units,
+          oxygenFillStatus: 'full',
+          units: 0,
+        });
+        await inventory.save();
+      }
+      allocateOxygen().catch(console.error);
     }
     res.json(request);
   } catch (err) {

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../api/client';
 import { toast } from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,6 @@ import {
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
@@ -42,6 +41,7 @@ interface Hospital {
 
 export default function HospitalsPage() {
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [recentlyAddedCount, setRecentlyAddedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editingHospital, setEditingHospital] = useState<Hospital | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -57,22 +57,26 @@ export default function HospitalsPage() {
     }
   });
 
-  useEffect(() => {
-    fetchHospitals();
-  }, []);
-
-  const fetchHospitals = async () => {
+  const fetchHospitals = useCallback(async () => {
     setLoading(true);
     try {
       const response = await apiClient.get('/hospitals');
       setHospitals(response.data);
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      setRecentlyAddedCount(
+        response.data.filter((h: Hospital) => new Date(h.createdAt).getTime() > cutoff).length
+      );
     } catch (error) {
       console.error('Error fetching hospitals:', error);
       toast.error('Failed to load hospitals');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchHospitals();
+  }, [fetchHospitals]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,7 +169,7 @@ export default function HospitalsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {hospitals.filter(h => new Date(h.createdAt) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length}
+              {recentlyAddedCount}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Last 30 days</p>
           </CardContent>
@@ -209,7 +213,7 @@ export default function HospitalsPage() {
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                       <Building2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground/60" />
-                      No hospitals found. Click "Add Hospital" to get started.
+                      No hospitals found. Click &quot;Add Hospital&quot; to get started.
                     </TableCell>
                   </TableRow>
                 ) : (

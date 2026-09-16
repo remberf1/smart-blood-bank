@@ -60,6 +60,9 @@ const patientRequestSchema = z
     urgency: z.enum(['emergency', 'scheduled', 'routine']).optional(),
     preferredHospitalId: objectId.optional(),
     scheduledTime: z.coerce.date().optional(),
+    destinationFacility: z.string().optional(),
+    ward: z.string().optional(),
+    bedNumber: z.string().optional(),
     notes: z.string().optional(),
   })
   .refine((d) => d.resourceType !== 'blood' || Boolean(d.bloodGroup), {

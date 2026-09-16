@@ -12,13 +12,17 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  Droplet, LogOut, CalendarPlus, CalendarClock, User, Phone, Mail,
-  ShieldCheck, Clock, MapPin, Pencil, KeyRound,
+  Droplet, LogOut, CalendarPlus, CalendarClock, Phone, Mail,
+  ShieldCheck, Clock, MapPin, Pencil, KeyRound, QrCode, Download, Award,
+  Navigation, AlertCircle,
 } from 'lucide-react';
 
 interface DonorProfile {
   _id: string; name: string; email: string; phone: string; bloodGroup: string;
   eligibilityStatus: string; lastDonationDate: string | null; sosOptIn: boolean; createdAt: string;
+  qrCode?: string;
+  location?: { type: string; coordinates: [number, number] };
+  allergies?: string;
 }
 interface Hospital { _id: string; name: string; address: string; contactPhone: string }
 interface Appointment { _id: string; hospitalId: Hospital; appointmentDate: string; status: string; notes?: string }
@@ -44,21 +48,77 @@ export default function DonorDashboard() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState(false);
+  const [nowMs, setNowMs] = useState(0);
   const [formData, setFormData] = useState({ hospitalId: '', appointmentDate: '', notes: '' });
   const router = useRouter();
 
-  // Profile editing + password change
+  // Digital Donor Pass & Certificate
+  const [qrOpen, setQrOpen] = useState(false);
+  const [certOpen, setCertOpen] = useState(false);
+  const handleDownloadPass = () => {
+    if (!donor?.qrCode) return;
+    const link = document.createElement('a');
+    link.href = donor.qrCode;
+    link.download = `Donor-Pass-${(donor.name || 'Donor').replace(/\s+/g, '_')}-${donor.bloodGroup}.png`;
+    link.click();
+  };
+
+  // Profile editing + password change + GPS location
   const [profileOpen, setProfileOpen] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [profileForm, setProfileForm] = useState({ name: '', email: '', phone: '', sosOptIn: true });
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    allergies: '',
+    sosOptIn: true,
+    location: null as { type: string; coordinates: [number, number] } | null,
+  });
+  const [detectingLocation, setDetectingLocation] = useState(false);
+  const [locMsg, setLocMsg] = useState('');
   const [pwOpen, setPwOpen] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
 
   const openProfile = () => {
     if (!donor) return;
-    setProfileForm({ name: donor.name, email: donor.email || '', phone: donor.phone, sosOptIn: donor.sosOptIn });
+    setProfileForm({
+      name: donor.name,
+      email: donor.email || '',
+      phone: donor.phone,
+      allergies: donor.allergies || '',
+      sosOptIn: donor.sosOptIn,
+      location: donor.location || null,
+    });
+    setLocMsg('');
     setProfileOpen(true);
+  };
+
+  const handleDetectGps = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser.');
+      return;
+    }
+    setDetectingLocation(true);
+    setLocMsg('Detecting current GPS coordinates…');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
+        setProfileForm((prev) => ({
+          ...prev,
+          location: { type: 'Point', coordinates: coords },
+        }));
+        setDetectingLocation(false);
+        setLocMsg(`Detected: ${coords[1].toFixed(4)}° N, ${coords[0].toFixed(4)}° E ✓`);
+        toast.success('Current location detected!');
+      },
+      () => {
+        setDetectingLocation(false);
+        setLocMsg('Could not detect location. Please allow browser location access.');
+        toast.error('Location detection failed. Check permissions.');
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
   };
 
   const saveProfile = async () => {
@@ -66,7 +126,15 @@ export default function DonorDashboard() {
     try {
       const res = await apiClient.put('/donor/auth/profile', profileForm);
       const d = res.data.donor;
-      setDonor((prev) => (prev ? { ...prev, name: d.name, email: d.email, phone: d.phone, sosOptIn: d.sosOptIn } : prev));
+      setDonor((prev) => (prev ? {
+        ...prev,
+        name: d.name,
+        email: d.email,
+        phone: d.phone,
+        sosOptIn: d.sosOptIn,
+        location: d.location,
+        allergies: d.allergies,
+      } : prev));
       toast.success('Profile updated');
       setProfileOpen(false);
     } catch (err: any) {
@@ -96,6 +164,7 @@ export default function DonorDashboard() {
   };
 
   useEffect(() => {
+    setNowMs(Date.now());
     const token = localStorage.getItem('donorToken');
     if (!token) { router.push('/donor/login'); return; }
     Promise.all([
@@ -154,7 +223,8 @@ export default function DonorDashboard() {
   const lastDonation = donor.lastDonationDate ? new Date(donor.lastDonationDate).toLocaleDateString() : 'Never';
   const daysUntilEligible = (() => {
     if (donor.eligibilityStatus === 'eligible' || !donor.lastDonationDate) return 0;
-    const since = (Date.now() - new Date(donor.lastDonationDate).getTime()) / 86400000;
+    const current = nowMs || new Date(donor.lastDonationDate).getTime();
+    const since = (current - new Date(donor.lastDonationDate).getTime()) / 86400000;
     return Math.max(0, Math.ceil(90 - since));
   })();
 
@@ -165,9 +235,11 @@ export default function DonorDashboard() {
       ? <Badge className="bg-amber-100 text-amber-700">Deferred</Badge>
       : <Badge className="bg-gray-100 text-gray-600">{donor.eligibilityStatus}</Badge>;
 
-  const nowLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  const upcoming = appointments.filter((a) => isActive(a.status) && new Date(a.appointmentDate) > new Date());
-  const past = appointments.filter((a) => !isActive(a.status) || new Date(a.appointmentDate) <= new Date());
+  const nowLocal = nowMs
+    ? new Date(nowMs - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+    : '';
+  const upcoming = appointments.filter((a) => isActive(a.status) && (nowMs ? new Date(a.appointmentDate).getTime() > nowMs : true));
+  const past = appointments.filter((a) => !isActive(a.status) || (nowMs ? new Date(a.appointmentDate).getTime() <= nowMs : false));
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -223,11 +295,32 @@ export default function DonorDashboard() {
               <Info icon={Mail} label="Email" value={donor.email} />
               <Info icon={Phone} label="Phone" value={donor.phone} />
               <Info icon={CalendarClock} label="Last donation" value={lastDonation} />
-              <Info icon={ShieldCheck} label="SOS alerts" value={donor.sosOptIn ? 'Opted in' : 'Off'} />
+              <Info
+                icon={MapPin}
+                label="GPS Location"
+                value={
+                  donor.location?.coordinates
+                    ? `${donor.location.coordinates[1].toFixed(2)}° N, ${donor.location.coordinates[0].toFixed(2)}° E`
+                    : 'Lagos (Default)'
+                }
+              />
+              <Info icon={AlertCircle} label="Allergies" value={donor.allergies || 'None reported'} />
+              <Info icon={ShieldCheck} label="SOS alerts" value={donor.sosOptIn ? 'Opted in (15km radius)' : 'Off'} />
             </div>
             <div className="flex flex-wrap gap-2 mt-5 pt-4 border-t border-border">
+              <Button
+                variant="default"
+                size="sm"
+                className="bg-red-600 hover:bg-red-700 text-white font-medium"
+                onClick={() => setQrOpen(true)}
+              >
+                <QrCode className="h-4 w-4 mr-1.5" /> View Digital Donor Pass
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setCertOpen(true)}>
+                <Award className="h-4 w-4 mr-1 text-amber-500" /> Donor Certificate
+              </Button>
               <Button variant="outline" size="sm" onClick={openProfile}>
-                <Pencil className="h-4 w-4 mr-1" /> Edit profile
+                <Pencil className="h-4 w-4 mr-1" /> Edit profile &amp; GPS
               </Button>
               <Button variant="outline" size="sm" onClick={() => setPwOpen(true)}>
                 <KeyRound className="h-4 w-4 mr-1" /> Change password
@@ -293,6 +386,22 @@ export default function DonorDashboard() {
                       </p>
                       <p className="text-sm text-gray-500">{new Date(a.appointmentDate).toLocaleString()}</p>
                       {a.notes && <p className="text-xs text-gray-400 mt-0.5">Note: {a.notes}</p>}
+                      {(() => {
+                        const coords = (a.hospitalId as any)?.location?.coordinates;
+                        const mapsUrl = coords && coords.length >= 2
+                          ? `https://www.google.com/maps/dir/?api=1&destination=${coords[1]},${coords[0]}`
+                          : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((a.hospitalId?.name || '') + ' ' + (a.hospitalId?.address || ''))}`;
+                        return (
+                          <a
+                            href={mapsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium mt-1"
+                          >
+                            <Navigation className="h-3 w-3" /> Get Directions
+                          </a>
+                        );
+                      })()}
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <ApptStatusBadge status={a.status} />
@@ -350,6 +459,43 @@ export default function DonorDashboard() {
               <Label>Phone</Label>
               <Input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="08012345678" />
             </div>
+            <div>
+              <Label>Allergies / Medical Notes</Label>
+              <Input
+                value={profileForm.allergies}
+                onChange={(e) => setProfileForm({ ...profileForm, allergies: e.target.value })}
+                placeholder="e.g. Penicillin, Latex, Aspirin, or None"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Clinical staff check this during pre-donation screening.
+              </p>
+            </div>
+            <div className="rounded-xl border p-3.5 bg-muted/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
+                  <MapPin className="h-3.5 w-3.5 text-red-600" /> GPS Coordinates for Proximity
+                </Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDetectGps}
+                  disabled={detectingLocation}
+                  className="h-7 text-xs px-2.5 bg-background shadow-xs hover:bg-muted"
+                >
+                  {detectingLocation ? 'Detecting…' : '📍 Detect Current GPS'}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground font-mono">
+                {profileForm.location?.coordinates
+                  ? `Lat: ${profileForm.location.coordinates[1].toFixed(4)}°, Lon: ${profileForm.location.coordinates[0].toFixed(4)}°`
+                  : 'No GPS coordinates saved (using Lagos default [3.38, 6.52])'}
+              </div>
+              {locMsg && <p className="text-xs text-emerald-600 font-medium">{locMsg}</p>}
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The WPS and SOS engines use your GPS coordinates to match you to patients needing blood within 15 km.
+              </p>
+            </div>
             <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input
                 type="checkbox"
@@ -393,6 +539,137 @@ export default function DonorDashboard() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setPwOpen(false)} disabled={savingPw}>Cancel</Button>
             <Button onClick={savePassword} disabled={savingPw}>{savingPw ? 'Saving…' : 'Change password'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Digital Donor Pass Modal */}
+      <Dialog open={qrOpen} onOpenChange={setQrOpen}>
+        <DialogContent className="sm:max-w-md text-center">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-center gap-2 text-xl font-bold">
+              <Droplet className="h-5 w-5 text-red-600" /> Digital Donor Pass
+            </DialogTitle>
+            <DialogDescription>
+              Present this verified pass at any hospital or blood drive to check in instantly.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center justify-center py-4 space-y-4">
+            <div className="relative bg-white p-4 rounded-2xl border-2 border-red-100 shadow-sm">
+              {donor.qrCode ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={donor.qrCode}
+                  alt="Donor QR Code"
+                  className="w-56 h-56 object-contain rounded-lg"
+                />
+              ) : (
+                <div className="w-56 h-56 flex items-center justify-center bg-gray-100 rounded-lg text-gray-400 text-sm">
+                  Generating QR Code...
+                </div>
+              )}
+              <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-red-600 text-white text-xs font-bold px-3 py-0.5 rounded-full shadow">
+                Group {donor.bloodGroup}
+              </div>
+            </div>
+
+            <div className="space-y-1 text-center">
+              <h3 className="font-bold text-lg text-gray-800">{donor.name}</h3>
+              <p className="text-xs text-muted-foreground font-mono">ID: {donor._id}</p>
+              <div className="pt-2">{eligibilityBadge}</div>
+            </div>
+
+            <p className="text-xs text-gray-400 max-w-xs">
+              Staff scan this QR code to verify your blood type, check donation eligibility, and record units.
+            </p>
+          </div>
+          <DialogFooter className="sm:justify-between flex-row gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadPass}
+              disabled={!donor.qrCode}
+              className="flex-1"
+            >
+              <Download className="h-4 w-4 mr-1.5" /> Download Pass
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setQrOpen(false)}
+              className="flex-1"
+            >
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Donor Certificate of Appreciation Modal */}
+      <Dialog open={certOpen} onOpenChange={setCertOpen}>
+        <DialogContent className="sm:max-w-xl text-center">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-center gap-2 text-xl font-bold">
+              <Award className="h-5 w-5 text-amber-500" /> Voluntary Donor Certificate
+            </DialogTitle>
+            <DialogDescription>
+              Official Certificate of Appreciation recognizing your voluntary blood donation commitment.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 px-2">
+            <div className="border-4 border-double border-amber-600/60 bg-gradient-to-b from-amber-50/50 via-white to-red-50/30 rounded-xl p-8 space-y-4 shadow-inner relative">
+              <div className="flex items-center justify-center gap-2 text-red-600 font-bold tracking-widest text-xs uppercase">
+                <Droplet className="h-4 w-4 fill-red-600" /> Smart Blood Bank &bull; Nigeria
+              </div>
+
+              <h2 className="text-2xl font-serif font-bold text-gray-900 tracking-wide uppercase">
+                Certificate of Appreciation
+              </h2>
+
+              <p className="text-xs text-muted-foreground uppercase tracking-widest">
+                This certificate is proudly awarded to
+              </p>
+
+              <h3 className="text-2xl font-bold text-red-700 underline decoration-red-300 underline-offset-8">
+                {donor.name}
+              </h3>
+
+              <p className="text-xs text-gray-600 max-w-md mx-auto leading-relaxed pt-2">
+                In sincere gratitude for your selfless dedication as a registered voluntary blood donor (Blood Group <strong className="text-red-700">{donor.bloodGroup}</strong>). Your commitment saves lives in critical maternal, trauma, and surgical emergencies across Nigerian healthcare facilities.
+              </p>
+
+              <div className="pt-4 flex items-center justify-between text-left text-xs border-t border-amber-200">
+                <div>
+                  <p className="text-muted-foreground">Donor ID: <span className="font-mono font-bold text-gray-700">{donor._id.slice(-8).toUpperCase()}</span></p>
+                  <p className="text-muted-foreground">Issued: {new Date(donor.createdAt).toLocaleDateString()}</p>
+                </div>
+                <div className="text-right">
+                  <Badge className="bg-amber-100 text-amber-900 border-amber-300">
+                    Certified Voluntary Donor
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="sm:justify-between flex-row gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.print()}
+              className="flex-1"
+            >
+              <Download className="h-4 w-4 mr-1.5" /> Print / Save Certificate
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setCertOpen(false)}
+              className="flex-1"
+            >
+              Close
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

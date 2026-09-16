@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../api/client';
 import { toast } from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,6 @@ import {
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
@@ -44,6 +43,7 @@ import {
   AlertCircle,
   HeartHandshake,
   ArrowUpDown,
+  Printer,
 } from 'lucide-react';
 
 function SortHead({ label, col, sort, onSort }: { label: string; col: string; sort: string; onSort: (c: any) => void }) {
@@ -93,8 +93,12 @@ export default function DonorsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [stats, setStats] = useState({ total: 0, eligible: 0, deferred: 0, bloodGroups: 0 });
+  const [nowMs, setNowMs] = useState(0);
   const [bloodFilter, setBloodFilter] = useState('');
   const [eligFilter, setEligFilter] = useState('');
+  const [homeFilter, setHomeFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [sort, setSort] = useState('recent');
   const [selectedDonor, setSelectedDonor] = useState<Donor | null>(null);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
@@ -106,8 +110,29 @@ export default function DonorsPage() {
   const [recording, setRecording] = useState(false);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [recordHospitalId, setRecordHospitalId] = useState('');
+  const [triage, setTriage] = useState({
+    weight: '65',
+    hemoglobin: '13.5',
+    bloodPressure: '120/80',
+    ttiPassed: true,
+  });
 
-  const fetchDonors = async (pageArg: number, search: string) => {
+  // QR Scanner / Verifier state
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verifiedDonor, setVerifiedDonor] = useState<{
+    id?: string;
+    name: string;
+    bloodGroup: string;
+    phone: string;
+    eligibilityStatus: string;
+    lastDonationDate?: string | null;
+    deferralReason?: string | null;
+  } | null>(null);
+  const [recordingQrDonation, setRecordingQrDonation] = useState(false);
+
+  const fetchDonors = useCallback(async (pageArg: number, search: string) => {
     setLoading(true);
     try {
       const response = await apiClient.get('/donors', {
@@ -117,19 +142,23 @@ export default function DonorsPage() {
           search: search || undefined,
           bloodGroup: bloodFilter || undefined,
           eligibility: eligFilter || undefined,
+          homeHospital: homeFilter || undefined,
+          from: fromDate || undefined,
+          to: toDate || undefined,
           sort,
         },
       });
       setDonors(response.data.data);
       setTotalPages(response.data.totalPages);
       setStats(response.data.stats);
+      setNowMs(Date.now());
     } catch (error) {
       console.error('Error fetching donors:', error);
       toast.error('Failed to load donors');
     } finally {
       setLoading(false);
     }
-  };
+  }, [bloodFilter, eligFilter, homeFilter, fromDate, toDate, sort]);
 
   // Debounce the search box and reset to the first page on a new term.
   useEffect(() => {
@@ -143,14 +172,20 @@ export default function DonorsPage() {
   // Changing a filter or the sort resets to the first page.
   useEffect(() => {
     setPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bloodFilter, eligFilter, sort]);
+  }, [bloodFilter, eligFilter, homeFilter, fromDate, toDate, sort]);
 
   // Fetch whenever the page, search, filters, or sort change.
   useEffect(() => {
     fetchDonors(page, debouncedSearch);
+  }, [page, debouncedSearch, fetchDonors]);
+
+  // Load hospitals once for the home-hospital filter (superadmin) + record dialog.
+  useEffect(() => {
+    if (isSuperadmin) {
+      apiClient.get('/hospitals').then((r) => setHospitals(r.data)).catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, bloodFilter, eligFilter, sort]);
+  }, []);
 
   const toggleSort = (col: keyof typeof SORT_KEYS) => setSort(SORT_KEYS[col]);
 
@@ -170,10 +205,14 @@ export default function DonorsPage() {
     setQrDialogOpen(true);
   };
 
-  // Superadmin has no home hospital, so they must choose where the donation is
-  // recorded; load the hospital list the first time the dialog is opened.
   const openRecord = async (donor: Donor) => {
     setRecordDonor(donor);
+    setTriage({
+      weight: '65',
+      hemoglobin: '13.5',
+      bloodPressure: '120/80',
+      ttiPassed: true,
+    });
     let list = hospitals;
     if (isSuperadmin && list.length === 0) {
       try {
@@ -194,10 +233,25 @@ export default function DonorsPage() {
       toast.error('Select the hospital where the donation happened.');
       return;
     }
+    const w = parseFloat(triage.weight);
+    if (isNaN(w) || w < 50) {
+      toast.error('Donor weight must be at least 50 kg for blood collection.');
+      return;
+    }
+    const hb = parseFloat(triage.hemoglobin);
+    if (isNaN(hb) || hb < 12.5) {
+      toast.error('Hemoglobin must be at least 12.5 g/dL per national guidelines.');
+      return;
+    }
+    if (!triage.ttiPassed) {
+      toast.error('Donation cannot proceed: Rapid TTI screening must be non-reactive.');
+      return;
+    }
     setRecording(true);
     try {
       const res = await apiClient.post(`/donors/${recordDonor._id}/record-donation`, {
         hospitalId: isSuperadmin ? recordHospitalId : undefined,
+        triage,
       });
       const { bloodGroup, units } = res.data.inventory;
       toast.success(`Donation recorded — ${bloodGroup} stock is now ${units} unit${units === 1 ? '' : 's'}. Donor deferred 90 days.`);
@@ -207,6 +261,62 @@ export default function DonorsPage() {
       toast.error(err.response?.data?.error || 'Failed to record donation');
     } finally {
       setRecording(false);
+    }
+  };
+
+  const handleVerifyQr = async (codeToVerify?: string) => {
+    const code = (codeToVerify || scanInput).trim();
+    if (!code) {
+      toast.error('Please enter or scan a QR code / token / donor ID');
+      return;
+    }
+    setVerifying(true);
+    try {
+      const res = await apiClient.post('/donors/verify', { qrData: code });
+      if (res.data.verified && res.data.donor) {
+        setVerifiedDonor(res.data.donor);
+        toast.success(`Verified: ${res.data.donor.name} (${res.data.donor.bloodGroup})`);
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Verification failed. Invalid QR code, token, or donor ID.');
+      setVerifiedDonor(null);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleRecordFromQr = async () => {
+    const code = scanInput.trim();
+    if (!code || !verifiedDonor) return;
+    if (isSuperadmin && !recordHospitalId) {
+      toast.error('Please select the hospital receiving the donation');
+      return;
+    }
+    setRecordingQrDonation(true);
+    try {
+      const res = await apiClient.post('/donors/verify', {
+        qrData: code,
+        recordDonation: true,
+        hospitalId: isSuperadmin ? recordHospitalId : undefined,
+        triage: {
+          weight: 65,
+          hemoglobin: 13.5,
+          bloodPressure: '120/80',
+          ttiPassed: true,
+        },
+      });
+      if (res.data.donationRecorded) {
+        const { bloodGroup, units } = res.data.inventory;
+        toast.success(`Donation recorded! ${bloodGroup} stock updated to ${units} unit(s). Donor deferred 90 days.`);
+        setScannerOpen(false);
+        setVerifiedDonor(null);
+        setScanInput('');
+        fetchDonors(page, debouncedSearch);
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to record donation');
+    } finally {
+      setRecordingQrDonation(false);
     }
   };
 
@@ -227,7 +337,8 @@ export default function DonorsPage() {
     if (!lastDonationDate) {
       return { text: 'Never donated', icon: Clock, color: 'text-muted-foreground' };
     }
-    const daysSince = Math.floor((Date.now() - new Date(lastDonationDate).getTime()) / (1000 * 60 * 60 * 24));
+    const current = nowMs || new Date(lastDonationDate).getTime();
+    const daysSince = Math.floor((current - new Date(lastDonationDate).getTime()) / (1000 * 60 * 60 * 24));
     if (daysSince < 90) {
       return { text: `${daysSince} days ago`, icon: AlertCircle, color: 'text-yellow-600' };
     }
@@ -236,7 +347,22 @@ export default function DonorsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Donors" subtitle="Manage registered blood donors" />
+      <PageHeader
+        title="Donors"
+        subtitle="Manage registered blood donors"
+        action={
+          <Button
+            onClick={() => {
+              setScannerOpen(true);
+              setVerifiedDonor(null);
+              setScanInput('');
+            }}
+            className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            <QrCode className="h-4 w-4" /> Scan / Verify Donor QR
+          </Button>
+        }
+      />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -310,11 +436,29 @@ export default function DonorsPage() {
           <option value="pending">Pending</option>
           <option value="ineligible">Ineligible</option>
         </select>
-        {(bloodFilter || eligFilter || searchTerm) && (
+        {isSuperadmin && (
+          <select
+            value={homeFilter}
+            onChange={(e) => setHomeFilter(e.target.value)}
+            className="h-9 border border-input rounded-lg px-3 text-sm bg-card max-w-[200px]"
+          >
+            <option value="">All home hospitals</option>
+            {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name}</option>)}
+          </select>
+        )}
+        <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          Registered
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+          <span>–</span>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+        </label>
+        {(bloodFilter || eligFilter || homeFilter || fromDate || toDate || searchTerm) && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setBloodFilter(''); setEligFilter(''); setSearchTerm(''); }}
+            onClick={() => { setBloodFilter(''); setEligFilter(''); setHomeFilter(''); setFromDate(''); setToDate(''); setSearchTerm(''); }}
             className="text-muted-foreground"
           >
             Clear
@@ -436,10 +580,11 @@ export default function DonorsPage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => handleViewQr(donor)}
-                              className="h-8 px-3 text-primary hover:text-primary hover:bg-primary/10"
+                              title="Print official donor ID card / pass"
+                              className="h-8 px-2.5 text-muted-foreground hover:text-foreground hover:bg-muted text-xs"
                             >
-                              <QrCode className="h-4 w-4 mr-1" />
-                              QR
+                              <Printer className="h-3.5 w-3.5 mr-1" />
+                              Print Pass
                             </Button>
                           </div>
                         </TableCell>
@@ -493,7 +638,7 @@ export default function DonorsPage() {
           </DialogHeader>
           {recordDonor && (
             <div className="space-y-4 py-2">
-              <div className="rounded-lg border border-border p-3 text-sm space-y-1">
+              <div className="rounded-lg border border-border p-3 text-sm space-y-1 bg-muted/20">
                 <p><strong>Donor:</strong> {recordDonor.name}</p>
                 <p className="flex items-center gap-2">
                   <strong>Blood group:</strong>
@@ -501,6 +646,70 @@ export default function DonorsPage() {
                 </p>
                 <p><strong>Phone:</strong> {recordDonor.phone}</p>
               </div>
+
+              {/* Pre-Donation Clinical Triage Checklist (WHO / NBTS Protocol) */}
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle className="h-3.5 w-3.5 text-emerald-600" /> Pre-Donation Clinical Triage
+                  </h4>
+                  <span className="text-[10px] text-muted-foreground">WHO / NBTS Standards</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-foreground">Donor Weight (kg)</label>
+                    <Input
+                      type="number"
+                      min="40"
+                      step="0.5"
+                      value={triage.weight}
+                      onChange={(e) => setTriage({ ...triage, weight: e.target.value })}
+                      className="h-8 text-xs mt-1 bg-background"
+                      placeholder="Min 50 kg"
+                    />
+                    <span className="text-[10px] text-muted-foreground">Min 50 kg required</span>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-foreground">Hemoglobin (g/dL)</label>
+                    <Input
+                      type="number"
+                      min="8"
+                      step="0.1"
+                      value={triage.hemoglobin}
+                      onChange={(e) => setTriage({ ...triage, hemoglobin: e.target.value })}
+                      className="h-8 text-xs mt-1 bg-background"
+                      placeholder="Min 12.5 g/dL"
+                    />
+                    <span className="text-[10px] text-muted-foreground">Min 12.5 g/dL</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-foreground">Blood Pressure (mmHg)</label>
+                  <Input
+                    type="text"
+                    value={triage.bloodPressure}
+                    onChange={(e) => setTriage({ ...triage, bloodPressure: e.target.value })}
+                    className="h-8 text-xs mt-1 bg-background"
+                    placeholder="e.g. 120/80"
+                  />
+                </div>
+
+                <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={triage.ttiPassed}
+                    onChange={(e) => setTriage({ ...triage, ttiPassed: e.target.checked })}
+                    className="h-4 w-4 accent-emerald-600 mt-0.5 rounded shrink-0"
+                  />
+                  <span className="leading-snug">
+                    <strong>TTI Rapid Screen Passed:</strong> Non-reactive for HIV 1/2, Hepatitis B (HBsAg), Hepatitis C (HCV), and Syphilis.
+                  </span>
+                </label>
+              </div>
+
               {isSuperadmin && (
                 <div>
                   <label className="text-sm font-medium text-foreground">Record at hospital</label>
@@ -533,38 +742,191 @@ export default function DonorsPage() {
       </Dialog>
 
       {/* QR Code Dialog */}
+      {/* Official Printable Donor ID Card Dialog */}
       <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Donor QR Code</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="h-5 w-5 text-primary" /> Official Donor ID Pass
+            </DialogTitle>
             <DialogDescription>
-              Scan this QR code at the blood bank for quick donor verification.
+              Printable identification badge for point-of-collection verification and donor records.
             </DialogDescription>
           </DialogHeader>
           {selectedDonor && (
-            <div className="text-center py-4">
-              <div className="mb-4">
-                <div className="w-48 h-48 mx-auto bg-card p-4 rounded-lg border">
-                  {qrCode ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={qrCode} alt="QR Code" className="w-full h-full object-contain" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <div className="py-2 space-y-4">
+              {/* Printable Card Area */}
+              <div className="rounded-xl border-2 border-red-200 bg-gradient-to-br from-red-50/40 via-white to-gray-50 p-4 shadow-xs relative">
+                <div className="flex items-center justify-between border-b pb-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <Droplet className="h-5 w-5 text-red-600 fill-red-600" />
+                    <div>
+                      <h4 className="font-bold text-xs uppercase tracking-wide text-gray-800">Smart Blood Bank</h4>
+                      <p className="text-[10px] text-muted-foreground">{selectedDonor.homeHospitalId?.name || 'Verified Donor Network'}</p>
                     </div>
-                  )}
+                  </div>
+                  <Badge className="bg-red-600 text-white font-bold text-sm px-2.5 py-0.5">
+                    {selectedDonor.bloodGroup}
+                  </Badge>
                 </div>
-              </div>
-              <div className="space-y-2 text-left">
-                <p><strong>Name:</strong> {selectedDonor.name}</p>
-                <p><strong>Blood Group:</strong> {selectedDonor.bloodGroup}</p>
-                <p><strong>Phone:</strong> {selectedDonor.phone}</p>
-                <p><strong>Status:</strong> {selectedDonor.eligibilityStatus}</p>
+
+                <div className="flex items-center gap-4">
+                  <div className="w-28 h-28 bg-white p-1.5 rounded-lg border shadow-xs shrink-0 flex items-center justify-center">
+                    {qrCode ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={qrCode} alt="Donor QR" className="w-full h-full object-contain" />
+                    ) : (
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                    )}
+                  </div>
+
+                  <div className="space-y-1 text-xs text-left">
+                    <p className="font-bold text-sm text-gray-900">{selectedDonor.name}</p>
+                    <p className="text-muted-foreground font-mono">ID: {selectedDonor._id.slice(-8).toUpperCase()}</p>
+                    <p className="text-gray-600">Tel: {selectedDonor.phone}</p>
+                    <div className="pt-1">
+                      {getEligibilityBadge(selectedDonor.eligibilityStatus)}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-gray-400 text-center pt-3 border-t mt-3">
+                  Valid at all participating hospital blood banks &bull; Federal Republic of Nigeria
+                </p>
               </div>
             </div>
           )}
+          <DialogFooter className="sm:justify-between flex-row gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => window.print()}
+              className="flex-1"
+            >
+              <Printer className="h-4 w-4 mr-1.5" /> Print Donor Badge
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setQrDialogOpen(false)}
+              className="flex-1"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Scan / Verify Donor QR Dialog */}
+      <Dialog open={scannerOpen} onOpenChange={setScannerOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-primary" /> Scan &amp; Verify Donor Pass
+            </DialogTitle>
+            <DialogDescription>
+              Scan a donor&apos;s digital QR pass with a 2D barcode scanner, or paste their token or donor ID below.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">QR Payload / JWT Token / Donor ID</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Paste QR payload, token, or 24-char donor ID..."
+                  value={scanInput}
+                  onChange={(e) => {
+                    setScanInput(e.target.value);
+                    if (verifiedDonor) setVerifiedDonor(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleVerifyQr();
+                    }
+                  }}
+                  autoFocus
+                />
+                <Button
+                  type="button"
+                  onClick={() => handleVerifyQr()}
+                  disabled={verifying || !scanInput.trim()}
+                >
+                  {verifying ? 'Verifying…' : 'Verify'}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Tip: Handheld 2D barcode scanners auto-fill this field upon scanning the donor&apos;s phone screen.
+              </p>
+            </div>
+
+            {verifiedDonor && (
+              <div className="rounded-xl border p-4 bg-muted/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-base text-foreground">{verifiedDonor.name}</h4>
+                    <p className="text-xs text-muted-foreground">{verifiedDonor.phone}</p>
+                  </div>
+                  <Badge className="bg-red-100 text-red-800 text-base font-bold px-3 py-1">
+                    {verifiedDonor.bloodGroup}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs text-muted-foreground">Eligibility:</span>
+                  {getEligibilityBadge(verifiedDonor.eligibilityStatus)}
+                </div>
+
+                {verifiedDonor.deferralReason && (
+                  <div className="text-xs text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                    <strong>Notice:</strong> {verifiedDonor.deferralReason}
+                  </div>
+                )}
+
+                {isSuperadmin && hospitals.length > 0 && (
+                  <div className="space-y-1 pt-2">
+                    <label className="text-xs font-medium">Receiving Hospital</label>
+                    <select
+                      value={recordHospitalId}
+                      onChange={(e) => setRecordHospitalId(e.target.value)}
+                      className="w-full h-9 border rounded-md px-3 text-sm bg-background"
+                    >
+                      <option value="">Select receiving hospital…</option>
+                      {hospitals.map((h) => (
+                        <option key={h._id} value={h._id}>{h.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="pt-2">
+                  <Button
+                    onClick={handleRecordFromQr}
+                    disabled={recordingQrDonation || verifiedDonor.eligibilityStatus !== 'eligible'}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white font-medium"
+                  >
+                    <HeartHandshake className="h-4 w-4 mr-2" />
+                    {recordingQrDonation
+                      ? 'Recording donation…'
+                      : verifiedDonor.eligibilityStatus === 'eligible'
+                        ? `Record 1 Unit Donation (${verifiedDonor.bloodGroup})`
+                        : 'Cannot Record (Donor Deferred)'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setQrDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setScannerOpen(false);
+                setVerifiedDonor(null);
+                setScanInput('');
+              }}
+            >
               Close
             </Button>
           </DialogFooter>

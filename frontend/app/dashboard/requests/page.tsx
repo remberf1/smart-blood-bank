@@ -32,7 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "react-hot-toast";
-import { Building2, Droplet, Wind, ArrowRightLeft } from "lucide-react";
+import { Droplet, Wind, ArrowRightLeft } from "lucide-react";
 
 interface Hospital {
   _id: string;
@@ -81,9 +81,25 @@ export default function ResourceRequestsPage() {
     units: "1", // string so it can be cleared/retyped on mobile
     notes: "",
   });
+  const [statusFilter, setStatusFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const router = useRouter();
   const { user } = useAuth();
   const isSuper = user?.role === "superadmin";
+
+  // Client-side status + date filtering of the loaded request lists.
+  const applyFilters = (list: ResourceRequest[]) =>
+    list.filter((r) => {
+      if (statusFilter && r.status !== statusFilter) return false;
+      if (fromDate && new Date(r.requestedAt) < new Date(fromDate)) return false;
+      if (toDate) {
+        const end = new Date(toDate);
+        end.setHours(23, 59, 59, 999);
+        if (new Date(r.requestedAt) > end) return false;
+      }
+      return true;
+    });
 
   // Fetch all data
  const fetchData = async () => {
@@ -114,7 +130,7 @@ export default function ResourceRequestsPage() {
       return;
     }
     fetchData();
-  }, []);
+  }, [router]);
 
   // Helper to get available supply options (hospitals that have the selected resource)
   // Helper to get available supply options (hospitals that have the selected resource)
@@ -251,6 +267,9 @@ export default function ResourceRequestsPage() {
     new Map(availableSuppliers.map((h) => [h._id, h])).values(),
   ).filter((h) => h._id !== excludeId);
 
+  const filteredIncoming = applyFilters(incomingRequests);
+  const filteredOutgoing = applyFilters(outgoingRequests);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -264,12 +283,41 @@ export default function ResourceRequestsPage() {
         }
       />
 
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
+        >
+          <option value="">Any status</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="declined">Declined</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+          <span>–</span>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+        </label>
+        {(statusFilter || fromDate || toDate) && (
+          <Button variant="ghost" size="sm" className="text-muted-foreground"
+            onClick={() => { setStatusFilter(""); setFromDate(""); setToDate(""); }}>
+            Clear
+          </Button>
+        )}
+      </div>
+
       {/* Incoming Requests (network-wide for superadmin) */}
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4">
           {isSuper ? "All Resource Requests (network)" : "Incoming Requests"}
         </h2>
-        {incomingRequests.length === 0 ? (
+        {filteredIncoming.length === 0 ? (
           <p className="text-muted-foreground">
             {isSuper ? "No resource requests yet." : "No incoming requests."}
           </p>
@@ -288,7 +336,7 @@ export default function ResourceRequestsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {incomingRequests.map((req) => (
+                {filteredIncoming.map((req) => (
                   <TableRow key={req._id}>
                     <TableCell>
                       {req.requestingHospitalId?.name || "—"}
@@ -365,7 +413,7 @@ export default function ResourceRequestsPage() {
       {/* Outgoing Requests — superadmin acts from the network table above */}
       <div hidden={isSuper}>
         <h2 className="text-xl font-semibold mb-4">Outgoing Requests</h2>
-        {outgoingRequests.length === 0 ? (
+        {filteredOutgoing.length === 0 ? (
           <p className="text-muted-foreground">No outgoing requests.</p>
         ) : (
           <div className="bg-card rounded shadow overflow-hidden">
@@ -382,7 +430,7 @@ export default function ResourceRequestsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {outgoingRequests.map((req) => (
+                {filteredOutgoing.map((req) => (
                   <TableRow key={req._id}>
                     <TableCell>{req.supplyingHospitalId?.name}</TableCell>
                     <TableCell>

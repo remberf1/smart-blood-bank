@@ -8,6 +8,8 @@ const bloodBatchSchema = new mongoose.Schema({
   source: { type: String, enum: ['donation', 'manual'], default: 'manual' },
   // Units remaining in this batch (0 once fully consumed/discarded/expired).
   units: { type: Number, required: true, min: 0 },
+  // Units originally collected/added (preserves historical metrics after units are consumed).
+  initialUnits: { type: Number, required: true, min: 1 },
   collectionDate: { type: Date, default: Date.now },
   expiryDate: { type: Date, required: true },
   status: {

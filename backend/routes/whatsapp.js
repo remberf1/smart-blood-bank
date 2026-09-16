@@ -4,6 +4,8 @@ const twilio = require('twilio');
 const Hospital = require('../models/Hospital');
 const Inventory = require('../models/Inventory');
 const Donor = require('../models/Donor');
+const PatientRequest = require('../models/PatientRequest');
+const mongoose = require('mongoose');
 const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = require('../controllers/wpsEngine');
 const { triggerSOS, processDonorResponse } = require('../services/sosService');
 const { formatNigerianPhone } = require('../utils/phone');
@@ -23,8 +25,9 @@ const validateTwilio =
         process.env.TWILIO_WEBHOOK_URL ? { url: process.env.TWILIO_WEBHOOK_URL } : {}
       );
 
-// User session storage
+// User session storage with 30-minute TTL to prevent memory leaks
 const userSessions = new Map();
+const SESSION_TTL_MS = 30 * 60 * 1000;
 
 const bloodGroupOptions = {
   '1': 'A+', '2': 'A-', '3': 'B+', '4': 'B-',
@@ -32,16 +35,30 @@ const bloodGroupOptions = {
 };
 
 function getUserSession(phone) {
-  if (!userSessions.has(phone)) {
-    userSessions.set(phone, {
+  const now = Date.now();
+  let session = userSessions.get(phone);
+  if (!session || (now - session.lastSeen > SESSION_TTL_MS)) {
+    session = {
       step: null,
       lat: null,
       lon: null,
       hasLocation: false, // set true once the user shares a WhatsApp location pin
-    });
+      lastSeen: now,
+    };
+    userSessions.set(phone, session);
+  } else {
+    session.lastSeen = now;
   }
-  return userSessions.get(phone);
+  return session;
 }
+
+// Periodically evict stale sessions
+setInterval(() => {
+  const now = Date.now();
+  for (const [phone, sess] of userSessions.entries()) {
+    if (now - sess.lastSeen > SESSION_TTL_MS) userSessions.delete(phone);
+  }
+}, 15 * 60 * 1000).unref();
 
 function getLocationPrompt() {
   return `📍 *SHARE YOUR LOCATION*
@@ -64,9 +81,137 @@ function getMainMenu() {
 2️⃣ *OXYGEN* – Find oxygen availability  
 3️⃣ *DONOR* – Register as blood donor
 4️⃣ *SOS* – Emergency donor alert
+5️⃣ *TRACK* – Track request status
 0️⃣ *HELP* – Commands & info
 
-Reply with a number (1, 2, 3, 4, or 0)`;
+Reply with a number (1, 2, 3, 4, 5, or 0)`;
+}
+
+function formatRequestCard(r) {
+  const statusEmoji = {
+    pending: '⏳ PENDING (Awaiting hospital assignment)',
+    approved: '✅ APPROVED & ASSIGNED',
+    fulfilled: '🎉 FULFILLED',
+    delivered: '📦 DELIVERED',
+    rejected: '❌ REJECTED',
+    cancelled: '🚫 CANCELLED',
+  }[r.status] || (r.status ? r.status.toUpperCase() : 'UNKNOWN');
+
+  const ref = r._id.toString().slice(-6).toUpperCase();
+  const hospital = r.allocatedHospitalId || r.preferredHospitalId;
+  const hospitalName = hospital ? hospital.name : 'Pending Assignment';
+  const resourceDesc = r.resourceType === 'blood'
+    ? `${r.unitsRequested || 1} unit(s) of ${r.bloodGroup}`
+    : `${r.oxygenCylindersRequested || 1} cylinder(s) of Oxygen`;
+
+  let card = `📋 *REQUEST #${ref}*\n`;
+  card += `📌 Status: *${statusEmoji}*\n`;
+  card += `🩺 Patient: ${r.patientName}\n`;
+  card += `🩸 Resource: ${resourceDesc}\n`;
+  card += `🏥 Fulfilling Hospital: *${hospitalName}*\n`;
+
+  if (r.destinationFacility) {
+    card += `📍 Destination: ${r.destinationFacility}`;
+    if (r.ward) card += ` (Ward: ${r.ward}${r.bedNumber ? `, Bed: ${r.bedNumber}` : ''})`;
+    card += `\n`;
+  }
+
+  if (hospital && hospital.contactPhone) {
+    card += `📞 Hospital Phone: ${hospital.contactPhone}\n`;
+  }
+
+  if (hospital && hospital.location?.coordinates && hospital.location.coordinates.length >= 2) {
+    card += `🗺️ Hospital Location: https://maps.google.com/?q=${hospital.location.coordinates[1]},${hospital.location.coordinates[0]}\n`;
+  }
+
+  if (r.deliveryAddress) {
+    card += `🚚 Delivery: ${r.deliveryAddress}\n`;
+  }
+  if (r.scheduledFor) {
+    card += `🗓️ Scheduled: ${new Date(r.scheduledFor).toLocaleString('en-GB')}\n`;
+  }
+  if (r.cancellationReason) {
+    card += `⚠️ Cancellation: ${r.cancellationReason}\n`;
+  }
+  return card;
+}
+
+async function handleTrackingLookup(query, userPhone, session) {
+  const cleaned = (query || '').trim();
+
+  // If no explicit query was provided, try auto-matching caller's phone
+  if (!cleaned) {
+    const senderDigits = userPhone.replace(/\D/g, '').slice(-10);
+    if (senderDigits.length >= 10) {
+      try {
+        const phoneRegex = new RegExp(senderDigits + '$');
+        const recent = await PatientRequest.find({ contactPhone: phoneRegex })
+          .sort({ createdAt: -1 })
+          .limit(2)
+          .populate('allocatedHospitalId preferredHospitalId');
+
+        if (recent.length > 0) {
+          session.step = null;
+          let reply = `🔍 *TRACKING YOUR REQUESTS*\n\nFound ${recent.length} recent request(s) linked to your number:\n\n`;
+          reply += recent.map(formatRequestCard).join('\n---\n\n');
+          reply += `\n_To check a different request, reply with its 6-character Reference ID or Phone Number._`;
+          return reply;
+        }
+      } catch (err) {
+        console.error('Auto-phone tracking error:', err);
+      }
+    }
+
+    // No auto-matched requests; prompt user
+    session.step = 'awaiting_tracking_query';
+    return `🔍 *TRACK YOUR REQUEST*\n\nPlease reply with your *6-character Request ID* (e.g. 3F8A1B) or your *Contact Phone Number* (e.g. 08012345678):`;
+  }
+
+  // A query was provided (or user was in awaiting_tracking_query)
+  try {
+    let requests = [];
+
+    // 1. Exact ObjectId
+    if (mongoose.Types.ObjectId.isValid(cleaned) && cleaned.length === 24) {
+      const match = await PatientRequest.findById(cleaned).populate('allocatedHospitalId preferredHospitalId');
+      if (match) requests.push(match);
+    }
+
+    // 2. Trailing 4-24 hex characters of an ObjectId
+    if (requests.length === 0 && /^[a-fA-F0-9]{4,24}$/.test(cleaned)) {
+      const allRecent = await PatientRequest.find().sort({ createdAt: -1 }).limit(100).populate('allocatedHospitalId preferredHospitalId');
+      const matched = allRecent.filter(r => r._id.toString().toLowerCase().endsWith(cleaned.toLowerCase()));
+      if (matched.length > 0) requests.push(...matched);
+    }
+
+    // 3. Phone number search
+    if (requests.length === 0) {
+      const digitsOnly = cleaned.replace(/\D/g, '');
+      const searchDigits = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
+      if (searchDigits.length >= 7) {
+        const phoneRegex = new RegExp(searchDigits + '$');
+        const matchedByPhone = await PatientRequest.find({ contactPhone: phoneRegex })
+          .sort({ createdAt: -1 })
+          .limit(3)
+          .populate('allocatedHospitalId preferredHospitalId');
+        requests.push(...matchedByPhone);
+      }
+    }
+
+    if (requests.length === 0) {
+      return `⚠️ *REQUEST NOT FOUND*\n\nWe couldn't find any request matching "${cleaned}".\n\nPlease verify your 6-character reference ID or 11-digit phone number and try again, or type *MENU*.`;
+    }
+
+    session.step = null;
+    let reply = `🔍 *REQUEST STATUS*\n\n`;
+    reply += requests.map(formatRequestCard).join('\n---\n\n');
+    reply += `\n_Type MENU to return to main menu._`;
+    return reply;
+  } catch (err) {
+    console.error('Tracking query error:', err);
+    session.step = null;
+    return `❌ An error occurred while retrieving your request. Please try again or type *MENU*.`;
+  }
 }
 
 function getBloodGroupMenu() {
@@ -103,7 +248,16 @@ function formatBloodResults(bloodGroup, rankedHospitals, lat, lon) {
     } else {
       message += `   🩸 ${h.unitsAvailable} units available\n`;
     }
-    message += `   📞 ${h.contactPhone || 'Call hospital'}\n\n`;
+    message += `   📞 ${h.contactPhone || 'Call hospital'}\n`;
+    if (h.coordinates && h.coordinates.length >= 2) {
+      const destLat = h.coordinates[1];
+      const destLon = h.coordinates[0];
+      const mapsUrl = hasLoc
+        ? `https://www.google.com/maps/dir/?api=1&origin=${lat},${lon}&destination=${destLat},${destLon}`
+        : `https://maps.google.com/?q=${destLat},${destLon}`;
+      message += `   🗺️ Directions: ${mapsUrl}\n`;
+    }
+    message += `\n`;
   });
 
   if (anyCompatible) {
@@ -125,7 +279,11 @@ function formatOxygenResults(oxygenData) {
     const fillIcon = h.oxygenFillStatus === 'full' ? '✅' : h.oxygenFillStatus === 'partial' ? '⚠️' : '❌';
     message += `${i+1}. *${h.name}*\n`;
     message += `   🔄 ${h.oxygenCylinderCount} cylinders ${fillIcon}\n`;
-    message += `   📞 ${h.contactPhone || 'Call hospital'}\n\n`;
+    message += `   📞 ${h.contactPhone || 'Call hospital'}\n`;
+    if (h.coordinates && h.coordinates.length >= 2) {
+      message += `   🗺️ Directions: https://maps.google.com/?q=${h.coordinates[1]},${h.coordinates[0]}\n`;
+    }
+    message += `\n`;
   });
   
   message += `_Type MENU for main menu_`;
@@ -147,6 +305,17 @@ router.post('/webhook', validateTwilio, async (req, res) => {
   if (incomingMsg.toLowerCase() === 'menu' || incomingMsg.toLowerCase() === 'main menu' || incomingMsg.toLowerCase() === 'start') {
     session.step = null;
     twiml.message(getMainMenu());
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml.toString());
+    return;
+  }
+
+  // Handle TRACK / STATUS commands anywhere (e.g. "TRACK", "STATUS", "TRACK 3F8A1B", "STATUS 08012345678")
+  const trackMatch = incomingMsg.match(/^(track|status)(\s+(.+))?$/i);
+  if (trackMatch) {
+    const query = trackMatch[3] ? trackMatch[3].trim() : null;
+    const reply = await handleTrackingLookup(query, userPhone, session);
+    twiml.message(reply);
     res.writeHead(200, { 'Content-Type': 'text/xml' });
     res.end(twiml.toString());
     return;
@@ -244,7 +413,7 @@ router.post('/webhook', validateTwilio, async (req, res) => {
 
           let distance = null;
           let wps;
-          if (hasLoc) {
+          if (hasLoc && item.hospital?.location?.coordinates && item.hospital.location.coordinates.length >= 2) {
             distance = haversineDistance(
               session.lat, session.lon,
               item.hospital.location.coordinates[1],
@@ -253,7 +422,7 @@ router.post('/webhook', validateTwilio, async (req, res) => {
             const distanceScore = getDistanceScore(distance);
             wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * distanceScore);
           } else {
-            // No location: rank by stock + recency only.
+            // No location or unlocated hospital: rank by stock + recency only.
             wps = (0.60 * stockScore) + (0.40 * recencyScore);
           }
 
@@ -265,7 +434,8 @@ router.post('/webhook', validateTwilio, async (req, res) => {
             group: item.bloodGroup,
             isExact: item.bloodGroup === bloodGroup,
             compatibilityRank: rank,
-            wps: wps
+            wps: wps,
+            coordinates: item.hospital?.location?.coordinates || null
           };
         });
 
@@ -322,6 +492,10 @@ router.post('/webhook', validateTwilio, async (req, res) => {
       }
     }
   }
+  else if (session.step === 'awaiting_tracking_query') {
+    const reply = await handleTrackingLookup(incomingMsg, userPhone, session);
+    twiml.message(reply);
+  }
   // Main menu numbers
   else if (incomingMsg === '0') {
     session.step = null;
@@ -340,19 +514,24 @@ router.post('/webhook', validateTwilio, async (req, res) => {
       { $group: {
           _id: '$hospitalId',
           cylinders: { $sum: '$oxygenCylinderCount' },
-          fill: { $max: '$oxygenFillStatus' },
+          fills: { $push: '$oxygenFillStatus' },
       } },
       { $lookup: { from: 'hospitals', localField: '_id', foreignField: '_id', as: 'hospital' } },
       { $unwind: '$hospital' },
       { $sort: { cylinders: -1 } },
     ]);
 
-    const formattedData = oxygenData.map(item => ({
-      name: item.hospital.name,
-      oxygenCylinderCount: item.cylinders,
-      oxygenFillStatus: item.fill,
-      contactPhone: item.hospital.contactPhone
-    }));
+    const fillRank = { full: 3, partial: 2, empty: 1 };
+    const formattedData = oxygenData.map(item => {
+      const bestFill = (item.fills || []).sort((a, b) => (fillRank[b] || 0) - (fillRank[a] || 0))[0] || 'empty';
+      return {
+        name: item.hospital.name,
+        oxygenCylinderCount: item.cylinders,
+        oxygenFillStatus: bestFill,
+        contactPhone: item.hospital.contactPhone,
+        coordinates: item.hospital?.location?.coordinates || null
+      };
+    });
 
     twiml.message(formatOxygenResults(formattedData));
   }
@@ -370,6 +549,11 @@ router.post('/webhook', validateTwilio, async (req, res) => {
       session.step = 'awaiting_sos_blood_group';
       twiml.message(`🚨 *SOS EMERGENCY* 🚨\n\nPlease reply with the blood group needed (e.g., O+, A-, B+, etc.)`);
     }
+  }
+  // === TRACKING HANDLER ===
+  else if (incomingMsg === '5') {
+    const reply = await handleTrackingLookup(null, userPhone, session);
+    twiml.message(reply);
   }
   // Unknown input
   else {

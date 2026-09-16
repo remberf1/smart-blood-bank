@@ -9,7 +9,11 @@
 // default to https:// when no scheme is given, and strip any trailing slash.
 function normalizeUrl(raw) {
   if (!raw) return '';
-  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let withScheme = raw;
+  if (!/^https?:\/\//i.test(raw)) {
+    const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?/i.test(raw);
+    withScheme = isLocal ? `http://${raw}` : `https://${raw}`;
+  }
   return withScheme.replace(/\/+$/, '');
 }
 

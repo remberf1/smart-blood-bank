@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const hospitalSchema = new mongoose.Schema({
-  name: { type: String, required: true },
+  name: { type: String, required: true, trim: true },
   address: { type: String, required: true },
   location: {
     type: { type: String, enum: ['Point'], default: 'Point' },
@@ -19,8 +19,7 @@ const hospitalSchema = new mongoose.Schema({
     bedCount: { type: Number, default: 200 },
     catchmentK: { type: Number, default: 200 },
   },
-  createdAt: { type: Date, default: Date.now },
-  deliveryStatus: { type: String, enum: ['pending', 'in-transit', 'delivered'], default: 'delivered' }
+  createdAt: { type: Date, default: Date.now }
 });
 
 hospitalSchema.index({ location: '2dsphere' });

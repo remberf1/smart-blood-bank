@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import apiClient from "../../api/client";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -16,18 +16,10 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Trash2, Droplet, Wind } from "lucide-react";
@@ -63,6 +55,7 @@ export default function InventoryPage() {
   const { user } = useAuth();
   const isSuperadmin = user?.role === "superadmin";
   const ownHospitalId = user?.hospitalId || "";
+  const canManageStock = user?.role === "admin" || user?.role === "superadmin";
 
   // Blood state
   const [bloodInventory, setBloodInventory] = useState<BloodInventoryItem[]>(
@@ -101,15 +94,15 @@ export default function InventoryPage() {
   const [groupFilter, setGroupFilter] = useState("");
   const [hospitalFilter, setHospitalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState(""); // '', 'available', 'low', 'out'
+  const [invSearch, setInvSearch] = useState(""); // hospital-name search
+  const [invSort, setInvSort] = useState<{ key: "units" | "updated" | null; dir: "asc" | "desc" }>({ key: "updated", dir: "desc" });
+  const toggleInvSort = (key: "units" | "updated") =>
+    setInvSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
   const [bloodPage, setBloodPage] = useState(1);
   const BLOOD_PER_PAGE = 10;
   const resetBloodPage = () => setBloodPage(1);
 
-  useEffect(() => {
-    fetchAllData();
-  }, []);
-
-  const fetchAllData = async () => {
+  const fetchAllData = useCallback(async () => {
     try {
       const [bloodRes, oxygenRes, hospitalsRes] = await Promise.all([
         apiClient.get("/inventory/blood"),
@@ -125,7 +118,11 @@ export default function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchAllData();
+  }, [fetchAllData]);
 
   // Blood handlers
   const handleBloodSubmit = async (e: React.FormEvent) => {
@@ -155,8 +152,9 @@ export default function InventoryPage() {
 
   const handleEditBlood = (item: BloodInventoryItem) => {
     setEditingBlood(item);
+    const hId = (item.hospitalId as any)?._id || (typeof item.hospitalId === 'string' ? item.hospitalId : '');
     setBloodForm({
-      hospitalId: item.hospitalId._id,
+      hospitalId: hId,
       bloodGroup: item.bloodGroup,
       units: item.units,
     });
@@ -204,8 +202,9 @@ export default function InventoryPage() {
 
   const handleEditOxygen = (item: OxygenInventoryItem) => {
     setEditingOxygen(item);
+    const hId = (item.hospitalId as any)?._id || (typeof item.hospitalId === 'string' ? item.hospitalId : '');
     setOxygenForm({
-      hospitalId: item.hospitalId._id,
+      hospitalId: hId,
       oxygenCylinderCount: item.oxygenCylinderCount,
       oxygenFillStatus: item.oxygenFillStatus,
     });
@@ -248,7 +247,9 @@ export default function InventoryPage() {
   const lowStockBlood = bloodInventory.filter(
     (i) => i.units > 0 && i.units < 10,
   ).length;
-  const totalOxygenCylinders = oxygenInventory.reduce(
+  const validBloodInventory = bloodInventory.filter((i) => i.hospitalId != null);
+  const validOxygenInventory = oxygenInventory.filter((i) => i.hospitalId != null);
+  const totalOxygenCylinders = validOxygenInventory.reduce(
     (sum, item) => sum + item.oxygenCylinderCount,
     0,
   );
@@ -257,8 +258,8 @@ export default function InventoryPage() {
   // shows at a glance which of the 8 groups are out/low, including groups with
   // no rows at all (which the table alone can't show).
   const overviewRows = hospitalFilter
-    ? bloodInventory.filter((i) => i.hospitalId?._id === hospitalFilter)
-    : bloodInventory;
+    ? validBloodInventory.filter((i) => i.hospitalId?._id === hospitalFilter)
+    : validBloodInventory;
   const groupTotals = BLOOD_GROUPS.map((bg) => ({
     bloodGroup: bg,
     units: overviewRows
@@ -268,15 +269,23 @@ export default function InventoryPage() {
   const stockLevel = (u: number) => (u === 0 ? "out" : u < 10 ? "low" : "ok");
 
   // Filtered + paginated detail rows.
-  const filteredBlood = bloodInventory.filter((i) => {
-    if (groupFilter && i.bloodGroup !== groupFilter) return false;
-    if (hospitalFilter && i.hospitalId?._id !== hospitalFilter) return false;
-    if (statusFilter) {
-      const lvl = i.units === 0 ? "out" : i.units < 10 ? "low" : "available";
-      if (lvl !== statusFilter) return false;
-    }
-    return true;
-  });
+  const filteredBlood = validBloodInventory
+    .filter((i) => {
+      if (groupFilter && i.bloodGroup !== groupFilter) return false;
+      if (hospitalFilter && i.hospitalId?._id !== hospitalFilter) return false;
+      if (invSearch && !(i.hospitalId?.name || "").toLowerCase().includes(invSearch.toLowerCase())) return false;
+      if (statusFilter) {
+        const lvl = i.units === 0 ? "out" : i.units < 10 ? "low" : "available";
+        if (lvl !== statusFilter) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (!invSort.key) return 0;
+      const mul = invSort.dir === "asc" ? 1 : -1;
+      if (invSort.key === "units") return (a.units - b.units) * mul;
+      return (new Date(a.lastUpdatedAt).getTime() - new Date(b.lastUpdatedAt).getTime()) * mul;
+    });
   const bloodTotalPages = Math.max(Math.ceil(filteredBlood.length / BLOOD_PER_PAGE), 1);
   const pagedBlood = filteredBlood.slice(
     (bloodPage - 1) * BLOOD_PER_PAGE,
@@ -288,6 +297,14 @@ export default function InventoryPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Inventory" subtitle="Blood and oxygen stock across hospitals" />
+
+      {!canManageStock && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900 flex items-center justify-between">
+          <div>
+            <span className="font-semibold">Staff Inventory Notice:</span> Blood units and batches update automatically as donations and hospital transfers are recorded. Direct manual stock overrides require administrator authorization.
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -458,6 +475,12 @@ export default function InventoryPage() {
 
           {/* Filters + Add */}
           <div className="flex flex-wrap items-center gap-3">
+            <Input
+              placeholder="Search hospital…"
+              value={invSearch}
+              onChange={(e) => { setInvSearch(e.target.value); resetBloodPage(); }}
+              className="h-9 w-44"
+            />
             <select
               value={groupFilter}
               onChange={(e) => { setGroupFilter(e.target.value); resetBloodPage(); }}
@@ -486,22 +509,24 @@ export default function InventoryPage() {
               <option value="low">Low (&lt;10)</option>
               <option value="out">Out of stock</option>
             </select>
-            {(groupFilter || hospitalFilter || statusFilter) && (
+            {(groupFilter || hospitalFilter || statusFilter || invSearch) && (
               <Button variant="ghost" size="sm" className="text-muted-foreground"
-                onClick={() => { setGroupFilter(""); setHospitalFilter(""); setStatusFilter(""); resetBloodPage(); }}>
+                onClick={() => { setGroupFilter(""); setHospitalFilter(""); setStatusFilter(""); setInvSearch(""); resetBloodPage(); }}>
                 Clear
               </Button>
             )}
-            <div className="ml-auto">
-              <Button
-                onClick={() => {
-                  resetBloodForm();
-                  setBloodDialogOpen(true);
-                }}
-              >
-                <Plus className="h-4 w-4 mr-2" /> Add Blood
-              </Button>
-            </div>
+            {canManageStock && (
+              <div className="ml-auto">
+                <Button
+                  onClick={() => {
+                    resetBloodForm();
+                    setBloodDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" /> Add Blood
+                </Button>
+              </div>
+            )}
           </div>
           <Card>
             <CardContent className="p-0">
@@ -510,9 +535,17 @@ export default function InventoryPage() {
                   <TableRow>
                     <TableHead>Hospital</TableHead>
                     <TableHead>Blood Group</TableHead>
-                    <TableHead>Units</TableHead>
+                    <TableHead>
+                      <button type="button" onClick={() => toggleInvSort("units")} className="inline-flex items-center gap-1 hover:text-foreground">
+                        Units {invSort.key === "units" ? (invSort.dir === "asc" ? "↑" : "↓") : ""}
+                      </button>
+                    </TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Last Updated</TableHead>
+                    <TableHead>
+                      <button type="button" onClick={() => toggleInvSort("updated")} className="inline-flex items-center gap-1 hover:text-foreground">
+                        Last Updated {invSort.key === "updated" ? (invSort.dir === "asc" ? "↑" : "↓") : ""}
+                      </button>
+                    </TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -543,7 +576,7 @@ export default function InventoryPage() {
                             : "bg-green-100 text-green-800";
                     return (
                       <TableRow key={item._id}>
-                        <TableCell>{item.hospitalId?.name}</TableCell>
+                        <TableCell className="font-medium">{item.hospitalId?.name || "Unknown Hospital"}</TableCell>
                         <TableCell>{item.bloodGroup}</TableCell>
                         <TableCell>{item.units}</TableCell>
                         <TableCell>
@@ -555,20 +588,28 @@ export default function InventoryPage() {
                           {new Date(item.lastUpdatedAt).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleEditBlood(item)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteBlood(item._id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          {canManageStock ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditBlood(item)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteBlood(item._id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded">
+                              Auto-managed
+                            </span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -600,16 +641,18 @@ export default function InventoryPage() {
       {/* Oxygen Inventory Section */}
       {activeTab === "oxygen" && (
         <>
-          <div className="flex justify-end mb-4">
-            <Button
-              onClick={() => {
-                resetOxygenForm();
-                setOxygenDialogOpen(true);
-              }}
-            >
-              <Plus className="h-4 w-4 mr-2" /> Add Oxygen
-            </Button>
-          </div>
+          {canManageStock && (
+            <div className="flex justify-end mb-4">
+              <Button
+                onClick={() => {
+                  resetOxygenForm();
+                  setOxygenDialogOpen(true);
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" /> Add Oxygen
+              </Button>
+            </div>
+          )}
           <Card>
             <CardContent className="p-0">
               <Table>
@@ -623,7 +666,7 @@ export default function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {oxygenInventory.map((item) => {
+                  {validOxygenInventory.map((item) => {
                     const fillBadge =
                       item.oxygenFillStatus === "full"
                         ? "bg-green-100 text-green-800"
@@ -632,7 +675,7 @@ export default function InventoryPage() {
                           : "bg-red-100 text-red-800";
                     return (
                       <TableRow key={item._id}>
-                        <TableCell>{item.hospitalId?.name}</TableCell>
+                        <TableCell className="font-medium">{item.hospitalId?.name || "Unknown Hospital"}</TableCell>
                         <TableCell>{item.oxygenCylinderCount}</TableCell>
                         <TableCell>
                           <Badge className={fillBadge}>
@@ -643,25 +686,33 @@ export default function InventoryPage() {
                           {new Date(item.lastUpdatedAt).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleEditOxygen(item)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteOxygen(item._id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          {canManageStock ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditOxygen(item)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteOxygen(item._id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded">
+                              Auto-managed
+                            </span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
                   })}
-                  {oxygenInventory.length === 0 && (
+                  {validOxygenInventory.length === 0 && (
                     <TableRow>
                       <TableCell
                         colSpan={5}

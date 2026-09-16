@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../api/client';
 import { toast } from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -48,7 +48,7 @@ export default function AppointmentsPage() {
   const isSuperadmin = user?.role === 'superadmin';
   const [recordingId, setRecordingId] = useState<string | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const r = await apiClient.get('/appointments', { params: { status: status || undefined } });
@@ -58,9 +58,11 @@ export default function AppointmentsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [status]);
 
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [status]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const setStatusFor = async (id: string, newStatus: string) => {
     try {

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Siren, ArrowLeft, MapPin, CheckCircle2, Phone } from 'lucide-react';
+import { Siren, ArrowLeft, MapPin, CheckCircle2 } from 'lucide-react';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
@@ -23,8 +23,11 @@ export default function SosPage() {
   const [result, setResult] = useState<Result | null>(null);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const g = new URLSearchParams(window.location.search).get('group');
-    if (g && BLOOD_GROUPS.includes(g)) setBloodGroup(g);
+    if (g && BLOOD_GROUPS.includes(g)) {
+      queueMicrotask(() => setBloodGroup(g));
+    }
   }, []);
 
   const useMyLocation = () => {

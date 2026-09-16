@@ -7,9 +7,10 @@ const { auth, isAdmin } = require('../middleware/auth');
 const { canAccessHospital, allowRoles } = require('../middleware/roles');
 const { addBloodUnits, removeBloodUnits, refreshBloodInventory, expireDueBatches } = require('../services/inventoryService');
 const { getCompatibleDonors, compatibilityIndex } = require('../utils/bloodCompatibility');
+const { allocateBlood, allocateOxygen } = require('../services/allocationService');
 
-// POST - Add inventory
-router.post('/',auth,async (req, res) => {
+// POST - Add inventory (admin/superadmin only; staff adjust stock via donations & transfers)
+router.post('/', auth, isAdmin, async (req, res) => {
   try {
     const { hospitalId, resourceType, bloodGroup, units, oxygenCylinderCount, oxygenFillStatus } = req.body;
 
@@ -22,6 +23,7 @@ router.post('/',auth,async (req, res) => {
     if (resourceType === 'blood') {
       if (!bloodGroup) return res.status(400).json({ error: 'bloodGroup is required for blood' });
       await addBloodUnits({ hospitalId, bloodGroup, units: units || 0, source: 'manual' });
+      allocateBlood().catch(console.error);
       const inventory = await Inventory.findOne({ hospitalId, resourceType: 'blood', bloodGroup });
       return res.status(201).json(inventory);
     }
@@ -37,6 +39,7 @@ router.post('/',auth,async (req, res) => {
     });
 
     await inventory.save();
+    allocateOxygen().catch(console.error);
     res.status(201).json(inventory);
   } catch (err) {
     console.error('Error:', err.message);
@@ -51,7 +54,7 @@ router.get('/blood', async (req, res) => {
       resourceType: 'blood',
       units: { $gt: 0 }
     }).populate('hospitalId', 'name address location contactPhone');
-    res.json(allBlood);
+    res.json(allBlood.filter((item) => item.hospitalId != null));
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
@@ -81,6 +84,7 @@ router.get('/blood/:bloodGroup', async (req, res) => {
       .lean();
 
     const annotated = inventory
+      .filter((row) => row.hospitalId != null)
       .map((row) => ({
         ...row,
         requestedGroup: requested,
@@ -106,7 +110,7 @@ router.get('/oxygen', async (req, res) => {
       resourceType: 'oxygen',
       oxygenCylinderCount: { $gt: 0 }
     }).populate('hospitalId', 'name address location contactPhone');
-    res.json(oxygen);
+    res.json(oxygen.filter((item) => item.hospitalId != null));
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
@@ -122,8 +126,8 @@ router.get('/hospital/:hospitalId', async (req, res) => {
   }
 });
 
-// PUT - Set blood units to an absolute value (reconciled through batches)
-router.put('/blood/:inventoryId',auth, async (req, res) => {
+// PUT - Set blood units to an absolute value (admin/superadmin only; staff adjust stock via donations & transfers)
+router.put('/blood/:inventoryId', auth, isAdmin, async (req, res) => {
   try {
     const target = Number(req.body.units);
     const existing = await Inventory.findById(req.params.inventoryId);
@@ -140,6 +144,7 @@ router.put('/blood/:inventoryId',auth, async (req, res) => {
     const delta = target - (existing.units || 0);
     if (delta > 0) {
       await addBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, units: delta, source: 'manual' });
+      allocateBlood().catch(console.error);
     } else if (delta < 0) {
       await removeBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, units: -delta });
     } else {
@@ -153,8 +158,8 @@ router.put('/blood/:inventoryId',auth, async (req, res) => {
   }
 });
 
-// PUT - Update oxygen
-router.put('/oxygen/:inventoryId',auth, async (req, res) => {
+// PUT - Update oxygen (admin/superadmin only)
+router.put('/oxygen/:inventoryId', auth, isAdmin, async (req, res) => {
   try {
     const { oxygenCylinderCount, oxygenFillStatus } = req.body;
     const existing = await Inventory.findById(req.params.inventoryId);
@@ -166,6 +171,7 @@ router.put('/oxygen/:inventoryId',auth, async (req, res) => {
     existing.oxygenFillStatus = oxygenFillStatus;
     existing.lastUpdatedAt = Date.now();
     await existing.save();
+    allocateOxygen().catch(console.error);
     res.json(existing);
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
@@ -239,9 +245,13 @@ router.get('/rank/:bloodGroup', async (req, res) => {
     const userLon = parseFloat(lon);
     const maxRadius = radius ? parseFloat(radius) : 100; // Default 100km radius
     
-    // Find all hospitals with the requested blood group
+    const exactOnly = req.query.exact === 'true';
+    const groups = exactOnly ? [bloodGroup] : getCompatibleDonors(bloodGroup);
+    const searchGroups = groups.length ? groups : [bloodGroup];
+
+    // Find all hospitals with the requested (or compatible) blood group
     const hospitalsWithStock = await Inventory.aggregate([
-      { $match: { resourceType: 'blood', bloodGroup: bloodGroup, units: { $gt: 0 } } },
+      { $match: { resourceType: 'blood', bloodGroup: { $in: searchGroups }, units: { $gt: 0 } } },
       { $lookup: { from: 'hospitals', localField: 'hospitalId', foreignField: '_id', as: 'hospital' } },
       { $unwind: '$hospital' }
     ]);
@@ -260,33 +270,40 @@ router.get('/rank/:bloodGroup', async (req, res) => {
     // Calculate max units for normalization
     const maxUnits = Math.max(...hospitalsWithStock.map(h => h.units));
     
-    // Calculate distance and WPS for each hospital, then filter by radius
-    const scoredHospitals = hospitalsWithStock.map(hospital => {
-      const distance = haversineDistance(
-        userLat, userLon,
-        hospital.hospital.location.coordinates[1],
-        hospital.hospital.location.coordinates[0]
-      );
-      
-      const distanceScore = getDistanceScore(distance);
-      const recencyScore = getRecencyScore(hospital.lastUpdatedAt);
-      const stockScore = getStockScore(hospital.units, maxUnits);
-      const wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * distanceScore);
-      
-      return {
-        hospitalId: hospital.hospital._id,
-        name: hospital.hospital.name,
-        address: hospital.hospital.address,
-        contactPhone: hospital.hospital.contactPhone,
-        distance: parseFloat(distance.toFixed(1)),
-        distanceScore: parseFloat(distanceScore.toFixed(4)),
-        recencyScore: parseFloat(recencyScore.toFixed(4)),
-        stockScore: parseFloat(stockScore.toFixed(4)),
-        wps: parseFloat(wps.toFixed(4)),
-        unitsAvailable: hospital.units,
-        lastUpdated: hospital.lastUpdatedAt
-      };
-    });
+    // Calculate distance and WPS for each hospital, filtering hospitals with valid coordinates
+    const scoredHospitals = hospitalsWithStock
+      .filter(h => h.hospital?.location?.coordinates && h.hospital.location.coordinates.length >= 2)
+      .map(hospital => {
+        const coords = hospital.hospital.location.coordinates;
+        const distance = haversineDistance(
+          userLat, userLon,
+          coords[1],
+          coords[0]
+        );
+        
+        const distanceScore = getDistanceScore(distance);
+        const recencyScore = getRecencyScore(hospital.lastUpdatedAt);
+        const stockScore = getStockScore(hospital.units, maxUnits);
+        const wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * distanceScore);
+        const rank = compatibilityIndex(bloodGroup, hospital.bloodGroup);
+        
+        return {
+          hospitalId: hospital.hospital._id,
+          name: hospital.hospital.name,
+          address: hospital.hospital.address,
+          contactPhone: hospital.hospital.contactPhone,
+          bloodGroup: hospital.bloodGroup,
+          isExact: hospital.bloodGroup === bloodGroup,
+          compatibilityRank: rank >= 0 ? rank : 99,
+          distance: parseFloat(distance.toFixed(1)),
+          distanceScore: parseFloat(distanceScore.toFixed(4)),
+          recencyScore: parseFloat(recencyScore.toFixed(4)),
+          stockScore: parseFloat(stockScore.toFixed(4)),
+          wps: parseFloat(wps.toFixed(4)),
+          unitsAvailable: hospital.units,
+          lastUpdated: hospital.lastUpdatedAt
+        };
+      });
     
     // Filter by radius
     const filteredHospitals = scoredHospitals.filter(h => h.distance <= maxRadius);
@@ -302,8 +319,10 @@ router.get('/rank/:bloodGroup', async (req, res) => {
       });
     }
     
-    // Sort by WPS (highest first)
-    const ranked = filteredHospitals.sort((a, b) => b.wps - a.wps);
+    // Sort by compatibility preference first (exact first), then WPS
+    const ranked = filteredHospitals.sort(
+      (a, b) => a.compatibilityRank - b.compatibilityRank || b.wps - a.wps
+    );
     
     // Get categorized recommendations
     const proximal = [...filteredHospitals].sort((a, b) => a.distance - b.distance)[0];

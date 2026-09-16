@@ -31,6 +31,7 @@ const donorSchema = new mongoose.Schema({
   // first donation. Donors remain a shared pool (visible to all staff, alertable
   // by SOS regardless of hospital); this is a tag, not an access boundary.
   homeHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: "Hospital" },
+  allergies: { type: String, default: '' },
   notes: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

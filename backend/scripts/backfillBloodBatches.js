@@ -102,6 +102,7 @@ async function main() {
         donorId: null,
         source: 'manual',
         units: deficit,
+        initialUnits: deficit,
         collectionDate: now,
         expiryDate: new Date(now.getTime() + EXPIRY_DAYS * DAY_MS),
         status: 'available',

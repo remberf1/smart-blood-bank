@@ -28,7 +28,7 @@ const DEFAULTS = {
   serviceZ: 1.65, // ~95% service level for safety stock
 };
 
-const oid = (id) => new mongoose.Types.ObjectId(id);
+const oid = (id) => (mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null);
 const startOfDay = (d) => {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -200,9 +200,23 @@ async function forecastForHospital(hospitalId, options = {}) {
 
   const reqMatch = { resourceType: 'blood', createdAt: { $gte: since } };
   const stockMatch = { resourceType: 'blood' };
+  const hObjectId = hospitalId ? oid(hospitalId) : null;
   if (hospitalId) {
-    reqMatch.$or = [{ allocatedHospitalId: oid(hospitalId) }, { preferredHospitalId: oid(hospitalId) }];
-    stockMatch.hospitalId = oid(hospitalId);
+    if (!hObjectId) {
+      return {
+        scope: 'hospital',
+        engine: 'heuristic',
+        modelInfo: null,
+        horizonDays,
+        historyDays,
+        generatedAt: now.toISOString(),
+        totalSuggestedRestock: 0,
+        atRiskGroups: [],
+        groups: [],
+      };
+    }
+    reqMatch.$or = [{ allocatedHospitalId: hObjectId }, { preferredHospitalId: hObjectId }];
+    stockMatch.hospitalId = hObjectId;
   }
 
   const [requests, stockRows, hospital] = await Promise.all([
@@ -211,7 +225,7 @@ async function forecastForHospital(hospitalId, options = {}) {
       { $match: stockMatch },
       { $group: { _id: '$bloodGroup', units: { $sum: '$units' } } },
     ]),
-    hospitalId ? Hospital.findById(hospitalId).select('profile').lean() : null,
+    hObjectId ? Hospital.findById(hObjectId).select('profile').lean() : null,
   ]);
 
   const stockByGroup = Object.fromEntries(stockRows.map((r) => [r._id, r.units]));

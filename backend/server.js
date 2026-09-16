@@ -55,6 +55,19 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('MongoDB connected');
 
+    // Ensure all inventory hospitalId references are stored as native ObjectIds
+    const Inventory = require('./models/Inventory');
+    Inventory.find({}).then(async (items) => {
+      for (const item of items) {
+        if (item.hospitalId && !(item.hospitalId instanceof mongoose.Types.ObjectId)) {
+          if (mongoose.Types.ObjectId.isValid(item.hospitalId)) {
+            item.hospitalId = new mongoose.Types.ObjectId(item.hospitalId);
+            await item.save();
+          }
+        }
+      }
+    }).catch(() => {});
+
     const runSweep = () =>
       expireDueBatches()
         .then((n) => n && console.log(`Expired ${n} blood batch(es)`))

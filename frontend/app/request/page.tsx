@@ -23,8 +23,12 @@ export default function PublicRequestPage() {
     resourceType: 'blood' as 'blood' | 'oxygen',
     bloodGroup: '',
     units: 1,
-    urgency: 'emergency' as 'emergency' | 'scheduled' | 'routine',
+    urgency: 'routine' as 'scheduled' | 'routine',
+    scheduledTime: '',
     preferredHospitalId: '',
+    destinationFacility: '',
+    ward: '',
+    bedNumber: '',
     notes: '',
   });
 
@@ -41,6 +45,10 @@ export default function PublicRequestPage() {
       setError('Please select a blood group.');
       return;
     }
+    if (form.urgency === 'scheduled' && !form.scheduledTime) {
+      setError('Please select the scheduled date and time for the transfusion.');
+      return;
+    }
     setSubmitting(true);
     try {
       const payload: any = {
@@ -52,7 +60,11 @@ export default function PublicRequestPage() {
       if (form.patientName) payload.patientName = form.patientName;
       if (form.email) payload.email = form.email;
       if (form.resourceType === 'blood') payload.bloodGroup = form.bloodGroup;
+      if (form.urgency === 'scheduled' && form.scheduledTime) payload.scheduledTime = form.scheduledTime;
       if (form.preferredHospitalId) payload.preferredHospitalId = form.preferredHospitalId;
+      if (form.destinationFacility) payload.destinationFacility = form.destinationFacility;
+      if (form.ward) payload.ward = form.ward;
+      if (form.bedNumber) payload.bedNumber = form.bedNumber;
       if (form.notes) payload.notes = form.notes;
 
       const res = await apiClient.post('/patient-requests', payload);
@@ -95,9 +107,29 @@ export default function PublicRequestPage() {
                 shortly and we&apos;ll notify you
                 {form.email ? ' by WhatsApp and email' : ' by WhatsApp'} as your request progresses.
               </p>
-              <Button variant="outline" onClick={() => { setDone(null); setForm({ ...form, notes: '' }); }}>
-                Submit another request
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+                <Link
+                  href={`/track?query=${done.ref}`}
+                  className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary/90"
+                >
+                  Track This Request Live
+                </Link>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setDone(null);
+                    setForm({
+                      ...form,
+                      notes: '',
+                      destinationFacility: '',
+                      ward: '',
+                      bedNumber: '',
+                    });
+                  }}
+                >
+                  Submit another request
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ) : (
@@ -165,27 +197,41 @@ export default function PublicRequestPage() {
                       onChange={(e) => set({ urgency: e.target.value as any })}
                       className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
                     >
-                      <option value="emergency">Emergency</option>
                       <option value="scheduled">Scheduled</option>
                       <option value="routine">Routine</option>
                     </select>
                   </div>
                 </div>
 
-                {form.urgency === 'emergency' && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm">
-                    <p className="text-red-800 font-medium">Is this a life-threatening emergency?</p>
-                    <p className="text-red-700 mt-0.5">
-                      Raising an SOS alerts nearby compatible donors immediately — faster than a standard request.
+                {form.urgency === 'scheduled' && (
+                  <div>
+                    <Label>Scheduled Date &amp; Time *</Label>
+                    <Input
+                      type="datetime-local"
+                      value={form.scheduledTime}
+                      onChange={(e) => set({ scheduledTime: e.target.value })}
+                      required
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Specify when the procedure, surgery, or transfusion is scheduled.
                     </p>
-                    <Link
-                      href={`/sos${form.resourceType === 'blood' && form.bloodGroup ? `?group=${encodeURIComponent(form.bloodGroup)}` : ''}`}
-                      className="mt-2 inline-flex items-center justify-center h-9 px-4 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
-                    >
-                      Raise an emergency SOS
-                    </Link>
                   </div>
                 )}
+
+                {/* Emergencies go through SOS (alerts donors directly), not a
+                    standard hospital request — so it's a callout, not an option. */}
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm">
+                  <p className="text-red-800 font-medium">Is this a life-threatening emergency?</p>
+                  <p className="text-red-700 mt-0.5">
+                    Don&apos;t wait on a standard request — raise an SOS to alert nearby compatible donors immediately.
+                  </p>
+                  <Link
+                    href={`/sos${form.resourceType === 'blood' && form.bloodGroup ? `?group=${encodeURIComponent(form.bloodGroup)}` : ''}`}
+                    className="mt-2 inline-flex items-center justify-center h-9 px-4 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+                  >
+                    Raise an emergency SOS
+                  </Link>
+                </div>
 
                 <div>
                   <Label>Preferred hospital (optional)</Label>
@@ -197,6 +243,39 @@ export default function PublicRequestPage() {
                     <option value="">No preference</option>
                     {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name}</option>)}
                   </select>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Destination &amp; Bed Details (Optional)</p>
+                  <div>
+                    <Label className="text-xs">Destination Facility / Hospital</Label>
+                    <Input
+                      value={form.destinationFacility}
+                      onChange={(e) => set({ destinationFacility: e.target.value })}
+                      placeholder="e.g. OAUTHC Ward 4, SDA Hospital Ile-Ife"
+                      className="mt-1 bg-white"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Ward / Unit</Label>
+                      <Input
+                        value={form.ward}
+                        onChange={(e) => set({ ward: e.target.value })}
+                        placeholder="e.g. ICU, Female Surgical"
+                        className="mt-1 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Bed / Room No.</Label>
+                      <Input
+                        value={form.bedNumber}
+                        onChange={(e) => set({ bedNumber: e.target.value })}
+                        placeholder="e.g. Bed 06"
+                        className="mt-1 bg-white"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div>

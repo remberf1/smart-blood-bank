@@ -4,7 +4,7 @@ const Donor = require('../models/Donor');
 const SOSRequest = require('../models/SOSRequest');
 const Hospital = require('../models/Hospital');
 const User = require('../models/User');
-const { normalizePhone } = require('../utils/phone');
+const { normalizePhone, formatNigerianPhone } = require('../utils/phone');
 const { getCompatibleDonors } = require('../utils/bloodCompatibility');
 const { sendEmail, buildSosAlertEmail } = require('./notificationService');
 
@@ -39,10 +39,22 @@ async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
   }
 }
 
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+const SID = process.env.TWILIO_ACCOUNT_SID;
+const TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const FROM = process.env.TWILIO_WHATSAPP_NUMBER;
+
+const ENABLED =
+  process.env.NOTIFICATIONS_ENABLED !== 'false' &&
+  Boolean(SID && TOKEN && FROM && SID.startsWith('AC'));
+
+let client = null;
+if (ENABLED) {
+  try {
+    client = twilio(SID, TOKEN);
+  } catch (err) {
+    console.error('Twilio init failed; SOS alerts disabled:', err.message);
+  }
+}
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -110,15 +122,21 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
 
       console.log(`📨 Sending SOS to: ${toNumber} from: ${fromNumber}`);
 
-      const message = await client.messages.create({
-        body: `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`,
-        from: fromNumber,
-        to: toNumber
-      });
+      let messageSid = 'disabled';
+      if (client) {
+        const message = await client.messages.create({
+          body: `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`,
+          from: fromNumber,
+          to: toNumber
+        });
+        messageSid = message.sid;
+      } else {
+        console.log(`ℹ️ Twilio disabled or unconfigured; simulated SOS dispatch to ${donorPhone}`);
+      }
 
       sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
       alertedCount++;
-      console.log(`✅ SOS sent to: ${donorPhone}, SID: ${message.sid}`);
+      console.log(`✅ SOS sent to: ${donorPhone}, SID: ${messageSid}`);
 
       // Track alert stats on the donor record.
       await Donor.updateOne(
@@ -151,8 +169,18 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
 
 async function processDonorResponse(donorPhone, response) {
   const cleanPhone = normalizePhone(donorPhone);
+  const formatted = formatNigerianPhone(donorPhone);
+  const digitsOnly = donorPhone ? donorPhone.toString().replace(/\D/g, '') : '';
+  const local10 = digitsOnly.length >= 10 ? `0${digitsOnly.slice(-10)}` : null;
 
-  const donor = await Donor.findOne({ phone: cleanPhone });
+  const phoneQuery = [
+    { phone: cleanPhone },
+    ...(formatted ? [{ phone: formatted }] : []),
+    ...(digitsOnly ? [{ phone: digitsOnly }] : []),
+    ...(local10 ? [{ phone: local10 }] : [])
+  ];
+
+  const donor = await Donor.findOne({ $or: phoneQuery });
   if (!donor) return { success: false, message: 'Donor not found' };
 
   const lowerResponse = response.toLowerCase().trim();
@@ -178,15 +206,19 @@ async function processDonorResponse(donorPhone, response) {
     // Close the loop: when a donor accepts, notify the person who raised the
     // SOS with the donor's contact so they can coordinate immediately.
     if (responseValue === 'yes' && sos.userPhone) {
-      try {
-        await client.messages.create({
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: `whatsapp:${sos.userPhone}`,
-          body: `🎉 *A donor is available!*\n\n*${donor.name}* (${donor.bloodGroup}) has agreed to donate for your *${sos.bloodGroup}* request.\n\n📞 Contact them: ${donor.phone}\n\nPlease coordinate the donation at your nearest hospital.`,
-        });
-        console.log(`📣 Notified SOS requester ${sos.userPhone} of donor ${donor.name}`);
-      } catch (err) {
-        console.error('Failed to notify SOS requester:', err.message);
+      if (client) {
+        try {
+          await client.messages.create({
+            from: process.env.TWILIO_WHATSAPP_NUMBER,
+            to: `whatsapp:${sos.userPhone}`,
+            body: `🎉 *A donor is available!*\n\n*${donor.name}* (${donor.bloodGroup}) has agreed to donate for your *${sos.bloodGroup}* request.\n\n📞 Contact them: ${donor.phone}\n\nPlease coordinate the donation at your nearest hospital.`,
+          });
+          console.log(`📣 Notified SOS requester ${sos.userPhone} of donor ${donor.name}`);
+        } catch (err) {
+          console.error('Failed to notify SOS requester:', err.message);
+        }
+      } else {
+        console.log(`ℹ️ Twilio disabled or unconfigured; simulated notification to SOS requester ${sos.userPhone}`);
       }
     }
   }

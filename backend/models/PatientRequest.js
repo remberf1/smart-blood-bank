@@ -10,13 +10,18 @@ const patientRequestSchema = new mongoose.Schema({
   urgency: { type: String, enum: ['emergency', 'scheduled', 'routine'], default: 'routine' },
   preferredHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital' },
 
-  // --- New fields for advance scheduling and delivery tracking ---
+  // --- Fields for advance scheduling and delivery tracking ---
   scheduledTime: { type: Date },                     // when the patient needs the resource (e.g., next week 4pm)
+  destinationFacility: { type: String },            // target hospital, clinic, or health centre
+  ward: { type: String },                           // hospital ward or department (e.g., Ward 4, Emergency)
+  bedNumber: { type: String },                      // bed or room number
   deliveryStatus: {
     type: String,
     enum: ['pending', 'approved', 'in-transit', 'delivered', 'cancelled'],
     default: 'pending'
   },
+  cancellationReason: { type: String },
+  cancelledAt: { type: Date },
   approvedAt: { type: Date },
   inTransitAt: { type: Date },
   deliveredAt: { type: Date },

@@ -139,18 +139,4 @@ router.get('/:id/inventory', async (req, res) => {
   }
 });
 
-// ==================== GET HOSPITALS WITH DELIVERY STATUS (Admin) ====================//
-router.put('/:id/delivery-status', auth, async (req, res) => {
-  try {
-    if (!canAccessHospital(req.user, req.params.id)) {
-      return res.status(403).json({ error: 'You can only update your own hospital' });
-    }
-    const { deliveryStatus } = req.body;
-    const hospital = await Hospital.findByIdAndUpdate(req.params.id, { deliveryStatus }, { new: true });
-    res.json(hospital);
-  } catch (err) {
-    console.error(err); res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 module.exports = router;

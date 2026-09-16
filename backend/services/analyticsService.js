@@ -49,15 +49,15 @@ async function donationStats(hospitalId, days = 30) {
   const [byGroup, byDay, total] = await Promise.all([
     BloodBatch.aggregate([
       { $match: match },
-      { $group: { _id: '$bloodGroup', units: { $sum: '$units' }, count: { $sum: 1 } } },
+      { $group: { _id: '$bloodGroup', units: { $sum: { $ifNull: ['$initialUnits', '$units'] } }, count: { $sum: 1 } } },
       { $sort: { _id: 1 } },
     ]),
     BloodBatch.aggregate([
       { $match: match },
-      { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$collectionDate' } }, units: { $sum: '$units' } } },
+      { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$collectionDate' } }, units: { $sum: { $ifNull: ['$initialUnits', '$units'] } } } },
       { $sort: { _id: 1 } },
     ]),
-    BloodBatch.aggregate([{ $match: match }, { $group: { _id: null, units: { $sum: '$units' }, count: { $sum: 1 } } }]),
+    BloodBatch.aggregate([{ $match: match }, { $group: { _id: null, units: { $sum: { $ifNull: ['$initialUnits', '$units'] } }, count: { $sum: 1 } } }]),
   ]);
 
   return {
@@ -97,7 +97,7 @@ async function wastageStats(hospitalId, days = 30) {
     BloodBatch.aggregate([{ $match: match }, { $group: { _id: null, units: { $sum: '$units' }, count: { $sum: 1 } } }]),
     BloodBatch.aggregate([
       { $match: { source: 'donation', collectionDate: { $gte: since }, ...(hospitalId ? { hospitalId: oid(hospitalId) } : {}) } },
-      { $group: { _id: null, units: { $sum: '$units' } } },
+      { $group: { _id: null, units: { $sum: { $ifNull: ['$initialUnits', '$units'] } } } },
     ]),
   ]);
 

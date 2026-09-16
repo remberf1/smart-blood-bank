@@ -9,6 +9,7 @@ const { formatNigerianPhone } = require("../utils/phone");
 const { evaluateDonorEligibility } = require("../utils/eligibility");
 const { addBloodUnits } = require("../services/inventoryService");
 const { refreshDonorEligibility } = require("../services/eligibilityService");
+const { allocateBlood } = require("../services/allocationService");
 const { validate } = require("../middleware/validate");
 const { donorRegisterSchema } = require("../validators/schemas");
 const { logAudit } = require("../services/auditService");
@@ -17,7 +18,7 @@ const { logAudit } = require("../services/auditService");
 // direct by-donor (/:donorId/record-donation) paths: gate on eligibility, defer
 // the donor 90 days, and add a traceable unit to the hospital's blood inventory.
 // Throws an Error with `.status` for expected client errors.
-async function recordDonationForDonor(donor, hospitalId) {
+async function recordDonationForDonor(donor, hospitalId, triageData = null) {
   if (donor.eligibilityStatus !== "eligible") {
     const err = new Error(`Donor is not eligible to donate (status: ${donor.eligibilityStatus})`);
     err.status = 400;
@@ -28,6 +29,27 @@ async function recordDonationForDonor(donor, hospitalId) {
     err.status = 400;
     throw err;
   }
+
+  // Pre-donation clinical triage checks (WHO / NBTS standards)
+  if (triageData) {
+    if (triageData.weight && Number(triageData.weight) < 50) {
+      const err = new Error("Donor does not meet minimum weight requirement of 50 kg");
+      err.status = 400;
+      throw err;
+    }
+    if (triageData.hemoglobin && Number(triageData.hemoglobin) < 12.5) {
+      const err = new Error("Donor hemoglobin is below clinical threshold of 12.5 g/dL");
+      err.status = 400;
+      throw err;
+    }
+    if (triageData.ttiPassed === false) {
+      const err = new Error("Rapid TTI screening was reactive; donation cannot proceed");
+      err.status = 400;
+      throw err;
+    }
+    if (triageData.weight) donor.weight = Number(triageData.weight);
+  }
+
   donor.lastDonationDate = new Date();
   donor.eligibilityStatus = "deferred";
   donor.deferralReason = "90 days waiting period after donation";
@@ -41,6 +63,7 @@ async function recordDonationForDonor(donor, hospitalId) {
     donorId: donor._id,
     source: "donation",
   });
+  allocateBlood().catch(console.error);
   return { bloodGroup: donor.bloodGroup, units };
 }
 
@@ -161,19 +184,25 @@ router.post("/verify", auth, async (req, res) => {
 
     // Resolve the donor id from the QR payload.
     let donorId;
+    const trimmedData = typeof qrData === 'string' ? qrData.trim() : '';
     try {
       // New format: signed token containing only the donor id.
-      const decoded = jwt.verify(qrData, process.env.JWT_SECRET);
+      const decoded = jwt.verify(trimmedData, process.env.JWT_SECRET);
       if (decoded.type !== "donor-verify" || !decoded.donorId) {
         throw new Error("Not a donor-verify token");
       }
       donorId = decoded.donorId;
     } catch (tokenErr) {
-      // Legacy fallback: QR codes issued before signing embedded plain JSON.
-      try {
-        donorId = JSON.parse(qrData).donorId;
-      } catch (jsonErr) {
-        return res.status(400).json({ error: "Invalid QR code" });
+      // Direct Mongo ObjectId fallback (e.g. manual entry or scanner reading ID)
+      if (/^[a-fA-F0-9]{24}$/.test(trimmedData)) {
+        donorId = trimmedData;
+      } else {
+        // Legacy fallback: QR codes issued before signing embedded plain JSON.
+        try {
+          donorId = JSON.parse(trimmedData).donorId;
+        } catch (jsonErr) {
+          return res.status(400).json({ error: "Invalid QR code or donor token" });
+        }
       }
     }
 
@@ -190,7 +219,7 @@ router.post("/verify", auth, async (req, res) => {
       // (superadmin may pass an explicit hospitalId).
       const hospitalId = req.user.hospitalId || req.body.hospitalId;
       try {
-        const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId);
+        const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId, req.body.triage);
         logAudit(req.user, 'donation.record', {
           entity: 'Donor', entityId: donor._id, hospitalId,
           summary: `Recorded ${bloodGroup} donation from ${donor.name} (QR)`,
@@ -246,7 +275,7 @@ router.post(
       if (!donor) return res.status(404).json({ error: "Donor not found" });
 
       const hospitalId = req.user.hospitalId || req.body.hospitalId;
-      const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId);
+      const { bloodGroup, units } = await recordDonationForDonor(donor, hospitalId, req.body.triage);
 
       logAudit(req.user, 'donation.record', {
         entity: 'Donor', entityId: donor._id, hospitalId,
@@ -335,6 +364,16 @@ router.get("/", auth, allowRoles("staff", "admin", "superadmin"), async (req, re
     const filter = {};
     if (req.query.bloodGroup) filter.bloodGroup = req.query.bloodGroup;
     if (req.query.eligibility) filter.eligibilityStatus = req.query.eligibility;
+    if (req.query.homeHospital) filter.homeHospitalId = req.query.homeHospital;
+    if (req.query.from || req.query.to) {
+      filter.createdAt = {};
+      if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
+      if (req.query.to) {
+        const d = new Date(req.query.to);
+        d.setHours(23, 59, 59, 999); // include the whole "to" day
+        filter.createdAt.$lte = d;
+      }
+    }
     if (req.query.search) {
       const safe = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const rx = new RegExp(safe, "i");
