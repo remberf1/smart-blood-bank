@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const donorSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, required: true, unique: true },
-  email: { type: String },
+  email: { type: String, lowercase: true, trim: true },
   bloodGroup: {
     type: String,
     enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],

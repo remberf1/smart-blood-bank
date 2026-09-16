@@ -56,6 +56,7 @@ const donorRegisterSchema = z.object({
   dateOfBirth: donorDob,
   gender: z.enum(['Male', 'Female', 'Other']).optional(),
   weight: z.coerce.number().min(30, 'Weight must be at least 30 kg').max(300, 'Weight cannot exceed 300 kg').optional(),
+  allergies: z.string().optional(),
   lastDonationDate: z.coerce.date().optional(),
 });
 

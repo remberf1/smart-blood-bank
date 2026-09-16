@@ -38,6 +38,14 @@ export default function DonorLogin() {
         <Link href="/" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4">
           <ArrowLeft className="h-4 w-4" /> Back to home
         </Link>
+        <div className="mb-3 p-3.5 bg-slate-100 border border-slate-200 rounded-2xl text-xs text-slate-800 flex items-center justify-between shadow-xs">
+          <span className="flex items-center gap-1.5 font-medium">
+            🏥 Hospital staff or lab admin?
+          </span>
+          <Link href="/login" className="font-bold underline text-slate-900 hover:text-black flex items-center gap-1">
+            Staff Portal →
+          </Link>
+        </div>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

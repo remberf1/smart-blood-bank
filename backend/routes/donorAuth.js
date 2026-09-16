@@ -21,8 +21,9 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
     // Find donor by email, include password field (hidden by default)
-    const donor = await Donor.findOne({ email }).select('+password');
+    const donor = await Donor.findOne({ email: normalizedEmail }).select('+password');
     // No account, or a donor registered without a password (e.g. via staff) —
     // treat both as invalid credentials rather than crashing bcrypt.compare.
     if (!donor || !donor.password) {

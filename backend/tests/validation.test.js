@@ -17,10 +17,14 @@ test('donorRegisterSchema: valid registration payload passes', () => {
     dateOfBirth: '1995-05-15',
     gender: 'Female',
     weight: 65,
+    allergies: 'Penicillin, Latex',
   };
 
   const result = donorRegisterSchema.safeParse(payload);
   assert.strictEqual(result.success, true);
+  if (result.success) {
+    assert.strictEqual(result.data.allergies, 'Penicillin, Latex');
+  }
 });
 
 test('donorRegisterSchema: rejects future date of birth', () => {

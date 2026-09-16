@@ -80,6 +80,7 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       dateOfBirth,
       gender,
       weight,
+      allergies,
       lastDonationDate,
     } = req.body;
 
@@ -98,7 +99,20 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     if (existingDonor) {
       return res
         .status(400)
-        .json({ error: "Donor with this phone number already exists" });
+        .json({ error: "A donor account with this phone number already exists." });
+    }
+
+    // Check if donor already exists using email (prevents duplicate accounts)
+    const normalizedEmail = email && typeof email === "string" && email.trim()
+      ? email.trim().toLowerCase()
+      : null;
+    if (normalizedEmail) {
+      const existingEmail = await Donor.findOne({ email: normalizedEmail });
+      if (existingEmail) {
+        return res.status(400).json({
+          error: "A donor account with this email already exists. Please sign in instead.",
+        });
+      }
     }
 
     // Calculate eligibility using the shared rules (accurate age, weight, wait).
@@ -108,14 +122,15 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     // Create donor with formatted phone
     const donor = new Donor({
       name,
-      phone: formattedPhone, // FIXED: use formattedPhone, not formattedPhone variable name
-      email,
+      phone: formattedPhone,
+      email: normalizedEmail || undefined,
       password,
       bloodGroup,
       location,
       dateOfBirth,
       gender,
       weight,
+      allergies: typeof allergies === "string" ? allergies.trim() : "",
       lastDonationDate,
       eligibilityStatus,
       deferralReason,

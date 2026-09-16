@@ -23,6 +23,7 @@ export default function DonorRegister() {
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '',
     bloodGroup: '', dateOfBirth: '', gender: '', weight: '',
+    allergies: '',
   });
 
   useEffect(() => {
@@ -56,14 +57,15 @@ export default function DonorRegister() {
     setSubmitting(true);
     try {
       await apiClient.post('/donors/register', {
-        name: form.name,
-        phone: form.phone,
-        email: form.email,
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim().toLowerCase(),
         password: form.password,
         bloodGroup: form.bloodGroup,
         dateOfBirth: form.dateOfBirth,
         gender: form.gender || undefined,
         weight: form.weight ? Number(form.weight) : undefined,
+        allergies: form.allergies ? form.allergies.trim() : undefined,
         location: { type: 'Point', coordinates: coords || DEFAULT_COORDS },
       });
       // Auto sign-in so onboarding is one smooth flow.
@@ -144,6 +146,17 @@ export default function DonorRegister() {
                   <Input type="number" min={30} max={300} value={form.weight} onChange={(e) => set({ weight: e.target.value })} placeholder="e.g. 65" />
                 </div>
               </div>
+              <div>
+                <Label>Allergies / Medical Notes (optional)</Label>
+                <Input
+                  value={form.allergies}
+                  onChange={(e) => set({ allergies: e.target.value })}
+                  placeholder="e.g. Penicillin, Latex, Aspirin, Asthma, or None"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Clinical staff check this during pre-donation health screening.
+                </p>
+              </div>
               <p className="text-xs text-gray-400 flex items-center gap-1"><MapPin className="h-3 w-3" /> {locStatus}</p>
               <Button type="submit" className="w-full" disabled={submitting}>
                 {submitting ? 'Creating account…' : 'Register as donor'}
@@ -152,6 +165,12 @@ export default function DonorRegister() {
             <p className="text-sm text-gray-500 text-center mt-4">
               Already registered?{' '}
               <Link href="/donor/login" className="text-red-600 font-medium hover:underline">Sign in</Link>
+            </p>
+            <p className="text-xs text-gray-400 text-center mt-3 pt-3 border-t border-gray-100">
+              Hospital staff or medical lab admin?{' '}
+              <Link href="/login" className="text-gray-600 hover:text-gray-900 underline font-medium">
+                Hospital staff login
+              </Link>
             </p>
           </CardContent>
         </Card>

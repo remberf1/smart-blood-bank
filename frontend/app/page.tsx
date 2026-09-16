@@ -29,24 +29,26 @@ export default function Home() {
               Smart <span className="text-red-600">Blood Bank</span>
             </span>
           </Link>
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/track"
-              className="text-sm font-medium text-gray-600 hover:text-gray-900 hidden sm:inline-block"
+              className="text-sm font-medium text-gray-600 hover:text-gray-900 hidden md:inline-block mr-1"
             >
               Track Request
             </Link>
             <Link
               href="/donor/login"
-              className="text-sm font-medium text-gray-600 hover:text-red-600 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-3.5 py-1.5 rounded-xl transition-colors shadow-2xs"
             >
-              Donor Portal
+              <Droplet className="h-3.5 w-3.5 fill-red-600 text-red-600" />
+              <span>Donor Portal</span>
             </Link>
             <Link
               href="/login"
-              className="text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-gray-900 hover:bg-black text-white px-3.5 py-1.5 rounded-xl shadow-xs transition-colors"
             >
-              Hospital Staff
+              <span>Hospital Staff</span>
+              <ArrowRight className="h-3 w-3" />
             </Link>
           </div>
         </div>
@@ -112,6 +114,65 @@ export default function Home() {
             <Link href="/donor/login" className="hover:text-red-600 flex items-center gap-1.5 transition-colors">
               <QrCode className="h-3.5 w-3.5" /> Digital Donor Pass
             </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Role-Based Portal Selectors — Obvious Navigation for Donors vs Hospital Staff */}
+      <section className="max-w-5xl mx-auto px-4 -mt-7 sm:-mt-9 mb-6 z-10 relative">
+        <div className="grid sm:grid-cols-2 gap-4">
+          {/* Card 1: Donors */}
+          <div className="bg-white rounded-2xl border-2 border-red-100 p-5 shadow-sm hover:border-red-300 hover:shadow-md transition-all flex flex-col justify-between">
+            <div className="flex items-start gap-3.5 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Users className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-red-600">For Voluntary Donors</span>
+                <h3 className="font-bold text-gray-900 text-base">Blood Donor Portal</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Access your verified QR donor pass, book hospital donation appointments, track eligibility, and get your certificate.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+              <Link
+                href="/donor/login"
+                className="flex-1 text-center py-2 px-3 rounded-lg bg-red-600 text-white font-semibold text-xs hover:bg-red-700 transition-colors"
+              >
+                Sign In as Donor →
+              </Link>
+              <Link
+                href="/donor/register"
+                className="flex-1 text-center py-2 px-3 rounded-lg border border-gray-300 text-gray-700 font-semibold text-xs hover:bg-gray-50 transition-colors"
+              >
+                Register as Donor
+              </Link>
+            </div>
+          </div>
+
+          {/* Card 2: Hospital Staff */}
+          <div className="bg-white rounded-2xl border-2 border-gray-200 p-5 shadow-sm hover:border-gray-400 hover:shadow-md transition-all flex flex-col justify-between">
+            <div className="flex items-start gap-3.5 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-gray-100 text-gray-800 flex items-center justify-center shrink-0">
+                <Activity className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">For Clinical & Medical Teams</span>
+                <h3 className="font-bold text-gray-900 text-base">Hospital Staff & Lab Dashboard</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Manage blood bags & oxygen cylinders, verify donor QR passes, triage emergency requests, and manage inventory.
+                </p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-gray-100">
+              <Link
+                href="/login"
+                className="w-full block text-center py-2 px-3 rounded-lg bg-gray-900 text-white font-semibold text-xs hover:bg-black transition-colors"
+              >
+                Hospital Staff Sign In →
+              </Link>
+            </div>
           </div>
         </div>
       </section>

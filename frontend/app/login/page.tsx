@@ -35,13 +35,21 @@ export default function LoginPage() {
         <Link href="/" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 mb-4">
           <ArrowLeft className="h-4 w-4" /> Back to home
         </Link>
+        <div className="mb-3 p-3.5 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-900 flex items-center justify-between shadow-xs">
+          <span className="flex items-center gap-1.5 font-medium">
+            🩸 Are you a registered blood donor?
+          </span>
+          <Link href="/donor/login" className="font-bold underline hover:text-red-950 flex items-center gap-1">
+            Donor Portal →
+          </Link>
+        </div>
         <Card className="w-full shadow-lg">
         <CardHeader className="text-center space-y-2">
-          <div className="mx-auto w-12 h-12 bg-primary rounded-xl flex items-center justify-center">
-            <Droplet className="h-6 w-6 text-primary-foreground" />
+          <div className="mx-auto w-12 h-12 bg-gray-900 rounded-xl flex items-center justify-center">
+            <Droplet className="h-6 w-6 text-white" />
           </div>
           <CardTitle className="text-2xl">Smart Blood Bank</CardTitle>
-          <CardDescription>Admin Dashboard Login</CardDescription>
+          <CardDescription>Hospital Staff & Lab Dashboard Login</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
