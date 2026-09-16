@@ -80,10 +80,29 @@ function commonMailHeaders() {
   return headers;
 }
 
-// Send a WhatsApp message. Never throws — returns a result object.
+// Send a WhatsApp message. Supports Baileys (zero sandbox, any phone) with Twilio fallback.
 async function sendWhatsApp(toPhone, body) {
   const to = normalizePhone(toPhone);
   if (!to) return { sent: false, reason: 'no-phone' };
+
+  const provider = process.env.WHATSAPP_PROVIDER || 'baileys';
+
+  // 1. Try Baileys if selected and connected
+  if (provider === 'baileys') {
+    try {
+      const baileysService = require('./baileysService');
+      const status = baileysService.getStatus();
+      if (status.connected) {
+        const res = await baileysService.sendMessage(to, body);
+        if (res.sent) return res;
+        console.warn(`[Baileys send failed; checking Twilio fallback]:`, res.error || res.reason);
+      }
+    } catch (e) {
+      // Baileys optional
+    }
+  }
+
+  // 2. Fall back to Twilio
   if (!ENABLED || !client) {
     console.log(`[notifications off] would WhatsApp ${to}: ${body.split('\n')[0]}`);
     return { sent: false, reason: 'disabled' };

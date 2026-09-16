@@ -89,6 +89,13 @@ mongoose.connect(process.env.MONGODB_URI)
     setInterval(runSweep, 60 * 60 * 1000).unref();            // hourly
     setInterval(runEligibility, 24 * 60 * 60 * 1000).unref(); // daily
     setInterval(runReminders, 6 * 60 * 60 * 1000).unref();    // every 6h
+
+    // Boot Baileys WhatsApp service if configured as provider
+    const whatsappProvider = process.env.WHATSAPP_PROVIDER || 'baileys';
+    if (whatsappProvider === 'baileys') {
+      const { initBaileys } = require('./services/baileysService');
+      initBaileys().catch((err) => console.error('Baileys init error:', err.message));
+    }
   })
   .catch(err => console.error('MongoDB connection error:', err));
 

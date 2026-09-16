@@ -96,7 +96,20 @@ export default function SosPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="SOS Emergencies" subtitle="Urgent donor alerts raised via WhatsApp — monitor responses and resolve" />
+      <PageHeader
+        title="SOS Emergencies"
+        subtitle="Urgent donor alerts raised via WhatsApp — monitor responses and resolve"
+        action={
+          <a
+            href={`${process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api$/, '') : ''}/api/whatsapp/qr`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors"
+          >
+            📱 Link WhatsApp (Scan QR)
+          </a>
+        }
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>

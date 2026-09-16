@@ -55,16 +55,12 @@ async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
 
     // If an admin WhatsApp phone is configured in .env, send a direct WhatsApp alert too
     const adminPhone = process.env.ADMIN_WHATSAPP_PHONE;
-    if (adminPhone && client) {
-      const cleanPhone = normalizePhone(adminPhone);
-      if (cleanPhone) {
-        const mapUrl = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null;
-        await client.messages.create({
-          body: `🚨 *ADMIN ALERT — EMERGENCY SOS* 🚨\n\nAn emergency SOS for *${bloodGroup}* blood was triggered near coordinates (${lat ?? 'N/A'}, ${lon ?? 'N/A'}).\n\n${mapUrl ? `📍 Location: ${mapUrl}\n` : ''}Eligible donors are being alerted. Please monitor on your dashboard: /dashboard/sos`,
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: `whatsapp:${cleanPhone}`,
-        }).catch((err) => console.warn('Admin WhatsApp SOS dispatch warning:', err.message));
-      }
+    if (adminPhone) {
+      const mapUrl = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+      await dispatchWhatsAppMessage(
+        adminPhone,
+        `🚨 *ADMIN ALERT — EMERGENCY SOS* 🚨\n\nAn emergency SOS for *${bloodGroup}* blood was triggered near coordinates (${lat ?? 'N/A'}, ${lon ?? 'N/A'}).\n\n${mapUrl ? `📍 Location: ${mapUrl}\n` : ''}Eligible donors are being alerted. Please monitor on your dashboard: /dashboard/sos`
+      ).catch((err) => console.warn('Admin WhatsApp SOS dispatch warning:', err.message));
     }
   } catch (err) {
     console.error('SOS admin alert failed:', err.message);
@@ -86,6 +82,41 @@ if (ENABLED) {
   } catch (err) {
     console.error('Twilio init failed; SOS alerts disabled:', err.message);
   }
+}
+
+async function dispatchWhatsAppMessage(phone, body) {
+  const provider = process.env.WHATSAPP_PROVIDER || 'baileys';
+
+  // 1. Try Baileys first if configured and connected
+  if (provider === 'baileys') {
+    try {
+      const baileysService = require('./baileysService');
+      const status = baileysService.getStatus();
+      if (status.connected) {
+        const res = await baileysService.sendMessage(phone, body);
+        if (res.sent) return res;
+        console.warn(`[Baileys SOS dispatch failed, trying Twilio fallback]:`, res.error || res.reason);
+      }
+    } catch (e) {}
+  }
+
+  // 2. Fall back to Twilio
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone) return { sent: false, reason: 'no-phone' };
+
+  if (client) {
+    try {
+      const msg = await client.messages.create({
+        from: FROM,
+        to: `whatsapp:${cleanPhone}`,
+        body,
+      });
+      return { sent: true, sid: msg.sid };
+    } catch (err) {
+      return { sent: false, reason: 'error', error: err.message };
+    }
+  }
+  return { sent: false, reason: 'unconfigured' };
 }
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -149,26 +180,18 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
   for (const donor of donorsWithDistance) {
     const donorPhone = normalizePhone(donor.phone);
     try {
-      const fromNumber = process.env.TWILIO_WHATSAPP_NUMBER;
-      const toNumber = `whatsapp:${donorPhone}`;
+      console.log(`📨 Sending SOS to: ${donorPhone}`);
+      const body = `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`;
 
-      console.log(`📨 Sending SOS to: ${toNumber} from: ${fromNumber}`);
-
-      let messageSid = 'disabled';
-      if (client) {
-        const message = await client.messages.create({
-          body: `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`,
-          from: fromNumber,
-          to: toNumber
-        });
-        messageSid = message.sid;
+      const dispatchResult = await dispatchWhatsAppMessage(donorPhone, body);
+      if (dispatchResult.sent) {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
+        alertedCount++;
+        console.log(`✅ SOS sent to: ${donorPhone}`);
       } else {
-        console.log(`ℹ️ Twilio disabled or unconfigured; simulated SOS dispatch to ${donorPhone}`);
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+        console.warn(`❌ SOS dispatch to ${donorPhone} failed:`, dispatchResult.reason || dispatchResult.error);
       }
-
-      sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
-      alertedCount++;
-      console.log(`✅ SOS sent to: ${donorPhone}, SID: ${messageSid}`);
 
       // Track alert stats on the donor record.
       await Donor.updateOne(
@@ -269,20 +292,11 @@ async function processDonorResponse(donorPhone, response) {
     // Close the loop: when a donor accepts, notify the person who raised the
     // SOS with the donor's contact so they can coordinate immediately.
     if (responseValue === 'yes' && sos.userPhone) {
-      if (client) {
-        try {
-          await client.messages.create({
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: `whatsapp:${sos.userPhone}`,
-            body: `🎉 *A donor is available!*\n\n*${donor.name}* (${donor.bloodGroup}) has agreed to donate for your *${sos.bloodGroup}* request.\n\n📞 Contact them: ${donor.phone}\n\nPlease coordinate the donation at your nearest hospital.`,
-          });
-          console.log(`📣 Notified SOS requester ${sos.userPhone} of donor ${donor.name}`);
-        } catch (err) {
-          console.error('Failed to notify SOS requester:', err.message);
-        }
-      } else {
-        console.log(`ℹ️ Twilio disabled or unconfigured; simulated notification to SOS requester ${sos.userPhone}`);
-      }
+      await dispatchWhatsAppMessage(
+        sos.userPhone,
+        `🎉 *A donor is available!*\n\n*${donor.name}* (${donor.bloodGroup}) has agreed to donate for your *${sos.bloodGroup}* request.\n\n📞 Contact them: ${donor.phone}\n\nPlease coordinate the donation at your nearest hospital.`
+      ).catch((err) => console.error('Failed to notify SOS requester:', err.message));
+      console.log(`📣 Notified SOS requester ${sos.userPhone} of donor ${donor.name}`);
     }
   }
 
