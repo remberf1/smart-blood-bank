@@ -87,6 +87,38 @@ function getMainMenu() {
 Reply with a number (1, 2, 3, 4, 5, or 0)`;
 }
 
+function getHelpGuide() {
+  return `ℹ️ *HELP & COMMAND GUIDE* 🏥
+
+Here are the fastest ways to use Smart Blood Bank:
+
+🩸 *1. Find Blood:*
+• Reply *1* and select your blood group
+• Or use shortcut: *1 <group> <city>*
+  _Example:_ *1 O+ Lagos* or *1 A- Ife*
+
+🫧 *2. Find Oxygen:*
+• Reply *2* to see cylinders available
+• Or use shortcut: *2 <city>*
+  _Example:_ *2 Lagos* or *2 Osogbo*
+
+📋 *3. Track Your Request:*
+• Reply *5* to find requests linked to your phone
+• Or type: *TRACK <ID>* (e.g. *TRACK 3F8A1B*)
+
+🚨 *4. Emergency SOS:*
+• Reply *4* or type *SOS* to alert nearby compatible donors immediately
+
+🩸 *5. Register as Donor:*
+• Reply *3* and send: *Name, Blood Group, Phone*
+
+📍 *Location Tips:*
+• Tap 📎 (or +) ➔ *Location* ➔ *Send your current location* for nearest hospital ranking.
+• Or reply with your city name (e.g. "Lagos", "Ife", "Abuja", "Osogbo").
+
+Type *MENU* anytime to return to the Main Menu.`;
+}
+
 function formatRequestCard(r) {
   const rawStatus = (r.deliveryStatus || r.status || 'pending').toLowerCase();
   const statusEmoji = {
@@ -326,9 +358,21 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
   console.log(`📱 [BotEngine] From: ${userPhone} | Msg: "${incomingMsg}" | Pin: (${latitude}, ${longitude})`);
 
   // 1. Menu Reset
-  if (/^(menu|main menu|start|help)$/i.test(incomingMsg)) {
+  if (/^(menu|main menu|start)$/i.test(incomingMsg)) {
     session.step = null;
     return getMainMenu();
+  }
+
+  // 1b. Help / Commands Guide
+  if (/^(help|info|commands|\?)$/i.test(incomingMsg)) {
+    session.step = null;
+    return getHelpGuide();
+  }
+
+  // 1c. Friendly Greetings
+  if (/^(hi|hello|hey|test|good morning|good afternoon|good evening)$/i.test(incomingMsg)) {
+    session.step = null;
+    return `👋 Hello! Welcome to the Smart Blood Bank & Oxygen Hub.\n\n${getMainMenu()}`;
   }
 
   // 2. Direct TRACK / STATUS command
@@ -544,7 +588,7 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
   // 10. Main Menu Number Options
   if (incomingMsg === '0') {
     session.step = null;
-    return getMainMenu();
+    return getHelpGuide();
   }
 
   if (incomingMsg === '1') {
@@ -606,6 +650,7 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
 module.exports = {
   handleIncomingMessage,
   getMainMenu,
+  getHelpGuide,
   getLocationPrompt,
   getBloodGroupMenu,
   formatRequestCard,

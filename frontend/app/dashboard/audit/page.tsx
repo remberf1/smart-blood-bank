@@ -118,13 +118,29 @@ export default function AuditPage() {
           <option value="">All entities</option>
           {entities.map((e) => <option key={e} value={e}>{e}</option>)}
         </select>
-        <label className="flex items-center gap-1 text-sm text-muted-foreground">
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
-            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="inline-flex items-center gap-1 border border-input rounded-lg px-2 py-1 bg-card">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold">From</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="text-xs bg-transparent focus:outline-hidden"
+              aria-label="Filter from date"
+            />
+          </div>
           <span>–</span>
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
-            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
-        </label>
+          <div className="inline-flex items-center gap-1 border border-input rounded-lg px-2 py-1 bg-card">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold">To</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="text-xs bg-transparent focus:outline-hidden"
+              aria-label="Filter to date"
+            />
+          </div>
+        </div>
         {(actionFilter || entityFilter || actorSearch || fromDate || toDate) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground"
             onClick={() => { setActionFilter(''); setEntityFilter(''); setActorSearch(''); setFromDate(''); setToDate(''); }}>

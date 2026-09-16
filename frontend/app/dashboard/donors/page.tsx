@@ -44,6 +44,8 @@ import {
   HeartHandshake,
   ArrowUpDown,
   Printer,
+  UserCheck,
+  Stethoscope,
 } from 'lucide-react';
 
 function SortHead({ label, col, sort, onSort }: { label: string; col: string; sort: string; onSort: (c: any) => void }) {
@@ -72,7 +74,12 @@ interface Donor {
   deferralReason?: string;
   lastDonationDate: string;
   createdAt: string;
-  homeHospitalId?: { name: string } | null;
+  homeHospitalId?: { _id?: string; name: string } | null;
+  weight?: number;
+  gender?: string;
+  dateOfBirth?: string;
+  allergies?: string;
+  notes?: string;
 }
 
 const PAGE_SIZE = 20;
@@ -131,6 +138,25 @@ export default function DonorsPage() {
     deferralReason?: string | null;
   } | null>(null);
   const [recordingQrDonation, setRecordingQrDonation] = useState(false);
+
+  // Clinical Manage Donor modal state
+  const [manageDonor, setManageDonor] = useState<Donor | null>(null);
+  const [manageModalOpen, setManageModalOpen] = useState(false);
+  const [savingManage, setSavingManage] = useState(false);
+  const [manageForm, setManageForm] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    bloodGroup: 'O+',
+    weight: '',
+    gender: '',
+    dateOfBirth: '',
+    allergies: '',
+    notes: '',
+    eligibilityStatus: 'auto',
+    deferralReason: '',
+    homeHospitalId: '',
+  });
 
   const fetchDonors = useCallback(async (pageArg: number, search: string) => {
     setLoading(true);
@@ -225,6 +251,62 @@ export default function DonorsPage() {
     }
     // Default the hospital so it's never left blank (superadmin can change it).
     setRecordHospitalId(isSuperadmin ? (list[0]?._id || '') : '');
+  };
+
+  const openManageModal = async (d: Donor) => {
+    setManageDonor(d);
+    let list = hospitals;
+    if (list.length === 0) {
+      try {
+        const res = await apiClient.get('/hospitals');
+        list = res.data;
+        setHospitals(res.data);
+      } catch {}
+    }
+    setManageForm({
+      name: d.name || '',
+      phone: d.phone || '',
+      email: d.email || '',
+      bloodGroup: d.bloodGroup || 'O+',
+      weight: d.weight != null ? String(d.weight) : '',
+      gender: d.gender || '',
+      dateOfBirth: d.dateOfBirth ? d.dateOfBirth.slice(0, 10) : '',
+      allergies: d.allergies || '',
+      notes: d.notes || '',
+      eligibilityStatus: d.eligibilityStatus || 'auto',
+      deferralReason: d.deferralReason || '',
+      homeHospitalId: (d.homeHospitalId as any)?._id || (typeof d.homeHospitalId === 'string' ? d.homeHospitalId : ''),
+    });
+    setManageModalOpen(true);
+  };
+
+  const handleSaveManage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manageDonor) return;
+    setSavingManage(true);
+    try {
+      const payload: any = {
+        name: manageForm.name,
+        phone: manageForm.phone,
+        bloodGroup: manageForm.bloodGroup,
+        weight: manageForm.weight !== '' ? Number(manageForm.weight) : null,
+        gender: manageForm.gender || undefined,
+        dateOfBirth: manageForm.dateOfBirth || undefined,
+        allergies: manageForm.allergies,
+        notes: manageForm.notes,
+        homeHospitalId: manageForm.homeHospitalId || null,
+        eligibilityStatus: manageForm.eligibilityStatus,
+        deferralReason: manageForm.deferralReason,
+      };
+      await apiClient.put(`/donors/${manageDonor._id}`, payload);
+      toast.success(`Clinical profile for ${manageForm.name} updated!`);
+      setManageModalOpen(false);
+      fetchDonors(page, debouncedSearch);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to update donor');
+    } finally {
+      setSavingManage(false);
+    }
   };
 
   const handleRecordDonation = async () => {
@@ -446,14 +528,30 @@ export default function DonorsPage() {
             {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name}</option>)}
           </select>
         )}
-        <label className="flex items-center gap-1 text-sm text-muted-foreground">
-          Registered
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
-            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Registered:</span>
+          <div className="inline-flex items-center gap-1 border border-input rounded-lg px-2 py-1 bg-card">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold">From</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="text-xs bg-transparent focus:outline-hidden"
+              aria-label="Filter from registration date"
+            />
+          </div>
           <span>–</span>
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
-            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
-        </label>
+          <div className="inline-flex items-center gap-1 border border-input rounded-lg px-2 py-1 bg-card">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold">To</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="text-xs bg-transparent focus:outline-hidden"
+              aria-label="Filter to registration date"
+            />
+          </div>
+        </div>
         {(bloodFilter || eligFilter || homeFilter || fromDate || toDate || searchTerm) && (
           <Button
             variant="ghost"
@@ -564,6 +662,16 @@ export default function DonorsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              onClick={() => openManageModal(donor)}
+                              title="Clinical exam & donor management"
+                              className="h-8 px-2 text-blue-700 hover:text-blue-800 hover:bg-blue-50 text-xs"
+                            >
+                              <UserCheck className="h-3.5 w-3.5 mr-1" />
+                              Manage
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => openRecord(donor)}
                               disabled={donor.eligibilityStatus !== 'eligible'}
                               title={
@@ -571,9 +679,9 @@ export default function DonorsPage() {
                                   ? `Not eligible (${donor.eligibilityStatus})`
                                   : 'Record a donation'
                               }
-                              className="h-8 px-3 text-emerald-700 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+                              className="h-8 px-2.5 text-emerald-700 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 text-xs"
                             >
-                              <HeartHandshake className="h-4 w-4 mr-1" />
+                              <HeartHandshake className="h-3.5 w-3.5 mr-1" />
                               Record
                             </Button>
                             <Button
@@ -581,10 +689,10 @@ export default function DonorsPage() {
                               size="sm"
                               onClick={() => handleViewQr(donor)}
                               title="Print official donor ID card / pass"
-                              className="h-8 px-2.5 text-muted-foreground hover:text-foreground hover:bg-muted text-xs"
+                              className="h-8 px-2 text-muted-foreground hover:text-foreground hover:bg-muted text-xs"
                             >
                               <Printer className="h-3.5 w-3.5 mr-1" />
-                              Print Pass
+                              Pass
                             </Button>
                           </div>
                         </TableCell>
@@ -624,6 +732,171 @@ export default function DonorsPage() {
           </div>
         </div>
       )}
+
+      {/* Clinical Exam & Manage Donor Dialog */}
+      <Dialog open={manageModalOpen} onOpenChange={setManageModalOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Stethoscope className="h-5 w-5 text-blue-600" /> Clinical Review & Donor Vitals
+            </DialogTitle>
+            <DialogDescription>
+              Update clinical exam vitals, weight, eligibility overrides, and home hospital assignment.
+            </DialogDescription>
+          </DialogHeader>
+
+          {manageDonor && (
+            <form onSubmit={handleSaveManage} className="space-y-4 py-2">
+              <div className="rounded-lg border border-border p-3 text-sm bg-muted/20 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-foreground">{manageDonor.name}</div>
+                  <div className="text-xs text-muted-foreground">{manageDonor.phone} · {manageDonor.email || 'No email'}</div>
+                </div>
+                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                  <Droplet className="h-3 w-3 mr-1" />
+                  {manageDonor.bloodGroup}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Body Weight (kg) *
+                  </label>
+                  <div className="relative">
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="30"
+                      max="250"
+                      placeholder="e.g. 65"
+                      value={manageForm.weight}
+                      onChange={(e) => setManageForm({ ...manageForm, weight: e.target.value })}
+                      required
+                    />
+                    <span className="absolute right-3 top-2.5 text-xs text-muted-foreground font-medium">kg</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Threshold: &ge;50kg required for donation.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Blood Group
+                  </label>
+                  <select
+                    value={manageForm.bloodGroup}
+                    onChange={(e) => setManageForm({ ...manageForm, bloodGroup: e.target.value })}
+                    className="w-full h-9 border border-input rounded-lg px-3 text-sm bg-card"
+                  >
+                    {BLOOD_GROUPS.map((g) => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Date of Birth
+                  </label>
+                  <Input
+                    type="date"
+                    value={manageForm.dateOfBirth}
+                    onChange={(e) => setManageForm({ ...manageForm, dateOfBirth: e.target.value })}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">Must be 18–65 years.</p>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Gender
+                  </label>
+                  <select
+                    value={manageForm.gender}
+                    onChange={(e) => setManageForm({ ...manageForm, gender: e.target.value })}
+                    className="w-full h-9 border border-input rounded-lg px-3 text-sm bg-card"
+                  >
+                    <option value="">Select gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Eligibility Status
+                  </label>
+                  <select
+                    value={manageForm.eligibilityStatus}
+                    onChange={(e) => setManageForm({ ...manageForm, eligibilityStatus: e.target.value })}
+                    className="w-full h-9 border border-input rounded-lg px-3 text-sm bg-card font-medium"
+                  >
+                    <option value="auto">🔄 Auto-calculate from vitals</option>
+                    <option value="eligible">✅ Eligible (Cleared)</option>
+                    <option value="deferred">⏳ Deferred (Temporary)</option>
+                    <option value="ineligible">❌ Ineligible (Permanent)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-foreground block mb-1">
+                    Home Hospital
+                  </label>
+                  <select
+                    value={manageForm.homeHospitalId}
+                    onChange={(e) => setManageForm({ ...manageForm, homeHospitalId: e.target.value })}
+                    className="w-full h-9 border border-input rounded-lg px-3 text-sm bg-card"
+                  >
+                    <option value="">None / Unassigned</option>
+                    {hospitals.map((h) => (
+                      <option key={h._id} value={h._id}>{h.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Deferral / Clearance Note
+                </label>
+                <Input
+                  placeholder="e.g. Weight meets requirement, cleared by physician"
+                  value={manageForm.deferralReason}
+                  onChange={(e) => setManageForm({ ...manageForm, deferralReason: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Allergies & Clinical Notes
+                </label>
+                <textarea
+                  value={manageForm.notes}
+                  onChange={(e) => setManageForm({ ...manageForm, notes: e.target.value })}
+                  rows={2}
+                  className="w-full border border-input rounded-lg p-2 text-sm bg-card focus:outline-hidden"
+                  placeholder="e.g. Normal blood pressure (120/80), negative rapid TTI screening, no known allergies."
+                />
+              </div>
+
+              <DialogFooter className="pt-2">
+                <Button type="button" variant="outline" onClick={() => setManageModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={savingManage} className="bg-blue-600 hover:bg-blue-700 text-white">
+                  {savingManage ? 'Saving...' : 'Save Clinical Profile'}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Record Donation Dialog */}
       <Dialog open={!!recordDonor} onOpenChange={(o) => !o && setRecordDonor(null)}>

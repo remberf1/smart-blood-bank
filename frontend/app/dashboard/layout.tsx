@@ -128,12 +128,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-muted/40">
       <Toaster position="top-right" toastOptions={{ duration: 5000, error: { duration: 6500 } }} />
 
-      {/* Mobile menu button */}
-      <div className="lg:hidden fixed top-4 left-4 z-50">
-        <Button variant="outline" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)} className="bg-card shadow-sm">
-          <Menu className="h-4 w-4" />
-        </Button>
-      </div>
+      {/* Mobile Top Navigation Header */}
+      <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between px-4 h-14 bg-card border-b border-border shadow-xs">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+            aria-label="Toggle navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center shadow-xs">
+              <Droplet className="h-4 w-4 text-primary-foreground" />
+            </div>
+            <span className="font-bold text-sm text-foreground">Smart Blood Bank</span>
+          </div>
+        </div>
+        <Link
+          href="/dashboard/profile"
+          className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-semibold"
+        >
+          {initials}
+        </Link>
+      </header>
 
       {/* Sidebar */}
       <aside
@@ -240,7 +260,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main content */}
       <main className="lg:ml-64 min-h-screen">
-        <div className="mx-auto max-w-[1400px] p-5 md:p-8 pt-16 lg:pt-8">
+        <div className="mx-auto max-w-[1400px] p-4 sm:p-6 md:p-8">
           {(badges.sos || 0) > 0 && pathname !== '/dashboard/sos' && (
             <div className="mb-6 p-4 rounded-xl bg-red-600 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md animate-pulse">
               <div className="flex items-center gap-3">

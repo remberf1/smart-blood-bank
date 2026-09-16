@@ -534,13 +534,13 @@ export default function InventoryPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Hospital</TableHead>
-                    <TableHead>Blood Group</TableHead>
-                    <TableHead>
-                      <button type="button" onClick={() => toggleInvSort("units")} className="inline-flex items-center gap-1 hover:text-foreground">
+                    <TableHead className="text-center">Blood Group</TableHead>
+                    <TableHead className="text-center">
+                      <button type="button" onClick={() => toggleInvSort("units")} className="inline-flex items-center gap-1 hover:text-foreground justify-center">
                         Units {invSort.key === "units" ? (invSort.dir === "asc" ? "↑" : "↓") : ""}
                       </button>
                     </TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead className="text-center">Status</TableHead>
                     <TableHead>
                       <button type="button" onClick={() => toggleInvSort("updated")} className="inline-flex items-center gap-1 hover:text-foreground">
                         Last Updated {invSort.key === "updated" ? (invSort.dir === "asc" ? "↑" : "↓") : ""}
@@ -577,9 +577,9 @@ export default function InventoryPage() {
                     return (
                       <TableRow key={item._id}>
                         <TableCell className="font-medium">{item.hospitalId?.name || "Unknown Hospital"}</TableCell>
-                        <TableCell>{item.bloodGroup}</TableCell>
-                        <TableCell>{item.units}</TableCell>
-                        <TableCell>
+                        <TableCell className="text-center font-bold text-red-700">{item.bloodGroup}</TableCell>
+                        <TableCell className="text-center font-semibold">{item.units}</TableCell>
+                        <TableCell className="text-center">
                           <Badge className={badgeClass}>
                             {status} ({item.units})
                           </Badge>
@@ -659,8 +659,8 @@ export default function InventoryPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Hospital</TableHead>
-                    <TableHead>Cylinders</TableHead>
-                    <TableHead>Fill Status</TableHead>
+                    <TableHead className="text-center">Cylinders</TableHead>
+                    <TableHead className="text-center">Fill Status</TableHead>
                     <TableHead>Last Updated</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -676,8 +676,8 @@ export default function InventoryPage() {
                     return (
                       <TableRow key={item._id}>
                         <TableCell className="font-medium">{item.hospitalId?.name || "Unknown Hospital"}</TableCell>
-                        <TableCell>{item.oxygenCylinderCount}</TableCell>
-                        <TableCell>
+                        <TableCell className="text-center font-semibold">{item.oxygenCylinderCount}</TableCell>
+                        <TableCell className="text-center">
                           <Badge className={fillBadge}>
                             {item.oxygenFillStatus}
                           </Badge>

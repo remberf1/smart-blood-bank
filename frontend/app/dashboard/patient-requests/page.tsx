@@ -171,16 +171,32 @@ export default function PatientRequestsPage() {
           </button>
         </div>
 
-        <label className="flex items-center gap-1 text-sm text-muted-foreground ml-auto">
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
-            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground ml-auto">
+          <div className="inline-flex items-center gap-1 border border-input rounded-lg px-2 py-1 bg-card">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold">From</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="text-xs bg-transparent focus:outline-hidden"
+              aria-label="Filter from date"
+            />
+          </div>
           <span>–</span>
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
-            className="h-9 border border-input rounded-lg px-2 text-sm bg-card" />
+          <div className="inline-flex items-center gap-1 border border-input rounded-lg px-2 py-1 bg-card">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold">To</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="text-xs bg-transparent focus:outline-hidden"
+              aria-label="Filter to date"
+            />
+          </div>
           {(fromDate || toDate) && (
             <button type="button" onClick={() => { setFromDate(''); setToDate(''); }} className="text-xs text-muted-foreground hover:text-foreground ml-1">clear</button>
           )}
-        </label>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">

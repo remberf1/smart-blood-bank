@@ -341,6 +341,37 @@ Open the dashboard → SOS to see details.`;
   return { subject: `🚨 Emergency SOS — ${bloodGroup} needed nearby`, text, html };
 }
 
+function buildDonorSosEmail({ donorName, donorGroup, bloodGroup, distanceKm, lat, lon }) {
+  const mapUrl = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+  const nameGreeting = donorName ? `Dear ${donorName},` : 'Dear Donor,';
+  const distDesc = distanceKm != null ? `${distanceKm.toFixed(1)} km` : 'nearby';
+  const text = `${nameGreeting}
+
+URGENT: A patient near you urgently needs ${bloodGroup} blood.
+Your registered blood group (${donorGroup}) is a compatible match.
+Distance: Approximately ${distDesc} from your location.
+
+If you are available to donate, please reply YES to the WhatsApp alert sent to your phone, or contact your nearest hospital blood bank.
+
+${mapUrl ? `Location: ${mapUrl}` : ''}
+Thank you for helping save a life!`;
+
+  const html = renderEmail({
+    emoji: '🚨',
+    accent: '#dc2626',
+    heading: `Emergency Blood Needed (${bloodGroup})`,
+    paragraphs: [
+      nameGreeting,
+      `A patient near you is in urgent need of ${bloodGroup} blood. Your registered blood group (${donorGroup}) is a medically compatible match.`,
+      `The emergency request was initiated approximately ${distDesc} from your location.`,
+      'If you are available to donate, please reply YES to the WhatsApp message sent to your phone, or contact your nearest hospital blood bank immediately.',
+    ],
+    cta: mapUrl ? { label: 'View Hospital Location', url: mapUrl } : undefined,
+  });
+
+  return { subject: `🚨 Urgent: Blood Needed (${bloodGroup}) near you`, text, html };
+}
+
 function buildWelcomeEmail(user) {
   const name = user.name ? `Hi ${user.name},` : 'Hello,';
   const text = `${name}
@@ -446,4 +477,6 @@ module.exports = {
   buildWelcomeEmail,
   buildPasswordResetEmail,
   buildSosAlertEmail,
+  buildDonorSosEmail,
+  renderEmail,
 };

@@ -6,7 +6,7 @@ const Hospital = require('../models/Hospital');
 const User = require('../models/User');
 const { normalizePhone, formatNigerianPhone } = require('../utils/phone');
 const { getCompatibleDonors } = require('../utils/bloodCompatibility');
-const { sendEmail, buildSosAlertEmail } = require('./notificationService');
+const { sendEmail, buildSosAlertEmail, buildDonorSosEmail } = require('./notificationService');
 
 // Email the admins of hospitals near an SOS so they can mobilise stock. Best-
 // effort and never throws — admin alerting must not break the SOS itself.
@@ -187,10 +187,28 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
       if (dispatchResult.sent) {
         sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
         alertedCount++;
-        console.log(`✅ SOS sent to: ${donorPhone}`);
+        console.log(`✅ SOS WhatsApp sent to: ${donorPhone}`);
       } else {
         sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
         console.warn(`❌ SOS dispatch to ${donorPhone} failed:`, dispatchResult.reason || dispatchResult.error);
+      }
+
+      // Dual-dispatch: Also send urgent email if donor has email on file
+      if (donor.email) {
+        const emailData = buildDonorSosEmail({
+          donorName: donor.name,
+          donorGroup: donor.bloodGroup,
+          bloodGroup,
+          distanceKm: donor.distance,
+          lat: userLat,
+          lon: userLon,
+        });
+        sendEmail(donor.email, emailData.subject, emailData.text, emailData.html)
+          .then((res) => {
+            if (res.sent) console.log(`📧 SOS Email sent to: ${donor.email}`);
+            else console.warn(`⚠️ SOS Email to ${donor.email} not sent:`, res.reason || res.error);
+          })
+          .catch((err) => console.error(`❌ Failed to send SOS email to ${donor.email}:`, err.message));
       }
 
       // Track alert stats on the donor record.

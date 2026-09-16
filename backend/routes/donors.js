@@ -437,22 +437,47 @@ router.put("/:donorId/eligibility", auth, async (req, res) => {
   }
 });
 
-// ==================== UPDATE DONOR (General, staff/admin only) ====================
+// ==================== UPDATE DONOR (General & clinical, staff/admin only) ====================
 router.put("/:donorId", auth, async (req, res) => {
   try {
-    const { phone, name, bloodGroup, location, eligibilityStatus } = req.body;
-
-    // Clean donorId
-    const donorId = req.params.donorId.replace(/[\n\r]/g, "").trim();
-
-    // Format phone number if provided
-    let updateData = {
+    const {
+      phone,
       name,
       bloodGroup,
       location,
+      weight,
+      dateOfBirth,
+      gender,
+      allergies,
+      notes,
+      homeHospitalId,
       eligibilityStatus,
+      deferralReason,
+    } = req.body;
+
+    // Clean donorId
+    const donorId = req.params.donorId.replace(/[\n\r]/g, "").trim();
+    const existingDonor = await Donor.findById(donorId);
+    if (!existingDonor) {
+      return res.status(404).json({ error: "Donor not found" });
+    }
+
+    let updateData = {
       updatedAt: Date.now(),
     };
+
+    if (name !== undefined) updateData.name = name;
+    if (bloodGroup !== undefined) updateData.bloodGroup = bloodGroup;
+    if (location !== undefined) updateData.location = location;
+    if (dateOfBirth !== undefined) updateData.dateOfBirth = dateOfBirth;
+    if (gender !== undefined) updateData.gender = gender;
+    if (allergies !== undefined) updateData.allergies = allergies;
+    if (notes !== undefined) updateData.notes = notes;
+    if (homeHospitalId !== undefined) updateData.homeHospitalId = homeHospitalId || null;
+
+    if (weight !== undefined) {
+      updateData.weight = weight === '' || weight === null ? null : Number(weight);
+    }
 
     if (phone) {
       const formattedPhone = formatNigerianPhone(phone);
@@ -462,24 +487,49 @@ router.put("/:donorId", auth, async (req, res) => {
       updateData.phone = formattedPhone;
     }
 
+    // Eligibility logic:
+    // If staff explicitly passed eligibilityStatus (e.g. manual override), respect it.
+    // If eligibilityStatus wasn't explicitly forced or was set to 'auto',
+    // evaluate based on vitals (weight, age, lastDonationDate).
+    if (eligibilityStatus && eligibilityStatus !== 'auto') {
+      updateData.eligibilityStatus = eligibilityStatus;
+      if (deferralReason !== undefined) {
+        updateData.deferralReason = deferralReason;
+      }
+    } else if (weight !== undefined || dateOfBirth !== undefined) {
+      // Re-evaluate eligibility with updated vitals
+      const evalResult = evaluateDonorEligibility({
+        dateOfBirth: updateData.dateOfBirth !== undefined ? updateData.dateOfBirth : existingDonor.dateOfBirth,
+        weight: updateData.weight !== undefined ? updateData.weight : existingDonor.weight,
+        lastDonationDate: existingDonor.lastDonationDate,
+      });
+      updateData.eligibilityStatus = evalResult.status;
+      updateData.deferralReason = evalResult.reason;
+    }
+
     const donor = await Donor.findByIdAndUpdate(donorId, updateData, {
       new: true,
       runValidators: true,
-    });
+    }).populate('homeHospitalId', 'name');
 
-    if (!donor) {
-      return res.status(404).json({ error: "Donor not found" });
-    }
+    // Audit log the update
+    logAudit({
+      userId: req.user._id,
+      hospitalId: req.user.hospitalId || donor.homeHospitalId?._id,
+      action: 'UPDATE_DONOR',
+      resourceType: 'donor',
+      details: {
+        donorId: donor._id,
+        name: donor.name,
+        weight: donor.weight,
+        eligibilityStatus: donor.eligibilityStatus,
+        deferralReason: donor.deferralReason,
+      },
+    });
 
     res.json({
       message: "Donor updated successfully",
-      donor: {
-        id: donor._id,
-        name: donor.name,
-        phone: donor.phone,
-        bloodGroup: donor.bloodGroup,
-        eligibilityStatus: donor.eligibilityStatus,
-      },
+      donor,
     });
   } catch (err) {
     console.error("Error updating donor:", err);
