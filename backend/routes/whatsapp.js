@@ -229,12 +229,12 @@ Reply with the number (1-8) or type e.g., "O+"`;
 
 function formatBloodResults(bloodGroup, rankedHospitals, lat, lon) {
   if (!rankedHospitals || rankedHospitals.length === 0) {
-    return `⚠️ *NO ${bloodGroup} BLOOD AVAILABLE*\n\nNo hospital has ${bloodGroup} blood right now.\n\nType *SOS* to alert nearby donors.`;
+    return `⚠️ *NO ${bloodGroup} BLOOD AVAILABLE*\n\nNo hospital currently has ${bloodGroup} (or compatible) blood in stock.\n\nType *4* or *SOS* to broadcast an emergency donor alert.`;
   }
   
   const hasLoc = lat != null && lon != null;
-  const anyCompatible = rankedHospitals.some((h) => h.isExact === false);
-  let message = `🩸 *${bloodGroup} BLOOD AVAILABLE*\n\n`;
+  const anyCompatible = rankedHospitals.some((h) => h.compatibleDetails && h.compatibleDetails.length > 0);
+  let message = `🩸 *${bloodGroup} BLOOD AVAILABILITY*\n\n`;
   if (hasLoc) message += `📍 Your location: ${lat.toFixed(4)}, ${lon.toFixed(4)}\n\n`;
   message += `*TOP RECOMMENDATIONS:*\n\n`;
 
@@ -242,11 +242,12 @@ function formatBloodResults(bloodGroup, rankedHospitals, lat, lon) {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
     message += `${medal} *${h.name}*\n`;
     if (h.distance != null) message += `   📍 ${h.distance}km away\n`;
-    // Show the actual group; flag when it's a compatible substitute, not exact.
-    if (h.group && h.isExact === false) {
-      message += `   🩸 ${h.unitsAvailable} units of *${h.group}* (compatible)\n`;
-    } else {
-      message += `   🩸 ${h.unitsAvailable} units available\n`;
+    if (h.exactUnits > 0) {
+      message += `   🩸 *${h.exactUnits} unit(s)* of *${bloodGroup}* (exact match)\n`;
+    }
+    if (h.compatibleDetails && h.compatibleDetails.length > 0) {
+      const compDesc = h.compatibleDetails.map((c) => `${c.units} ${c.group}`).join(', ');
+      message += `   🔄 Compatible: ${compDesc}\n`;
     }
     message += `   📞 ${h.contactPhone || 'Call hospital'}\n`;
     if (h.coordinates && h.coordinates.length >= 2) {
@@ -261,9 +262,12 @@ function formatBloodResults(bloodGroup, rankedHospitals, lat, lon) {
   });
 
   if (anyCompatible) {
-    message += `ℹ️ Groups marked *(compatible)* are safe substitutes for ${bloodGroup}. Final suitability is confirmed by the hospital.\n\n`;
+    message += `ℹ️ Groups marked *Compatible* are medically safe substitutes for ${bloodGroup}. Final crossmatching is verified by the hospital.\n\n`;
   }
-  if (!hasLoc) message += `💡 Share your location (📎 → Location) to see the *nearest* hospitals first.\n\n`;
+  if (!hasLoc) message += `💡 Tip: Share your location (📎 → Location) to see nearest hospitals first.\n\n`;
+
+  const webUrl = process.env.APP_URL || 'https://sbb-web.onrender.com';
+  message += `📋 *Place Request Online:*\n${webUrl}/request\n\n`;
   message += `_Reply 1-8 for another blood type, or MENU to start over._`;
 
   return message;
@@ -402,48 +406,70 @@ router.post('/webhook', validateTwilio, async (req, res) => {
       ]);
 
       if (hospitalsWithStock.length === 0) {
-        twiml.message(`⚠️ No ${bloodGroup} (or compatible) blood available.\n\nType 1 for another blood type, SOS for emergency alert, or MENU for main menu.`);
+        twiml.message(`⚠️ No ${bloodGroup} (or compatible) blood available.\n\nType 1 for another blood type, 4 or SOS for emergency alert, or MENU for main menu.`);
       } else {
         const hasLoc = session.hasLocation;
-        const maxUnits = Math.max(...hospitalsWithStock.map(h => h.units));
-        const scored = hospitalsWithStock.map(item => {
+        const maxUnits = Math.max(...hospitalsWithStock.map((h) => h.units || 1), 1);
+
+        // Group multiple stock batches under each distinct hospital
+        const hospitalMap = new Map();
+        for (const item of hospitalsWithStock) {
+          const hid = item.hospital._id ? item.hospital._id.toString() : item.hospital.name;
+          if (!hospitalMap.has(hid)) {
+            let distance = null;
+            let distanceScore = 0.5;
+            if (hasLoc && item.hospital?.location?.coordinates && item.hospital.location.coordinates.length >= 2) {
+              distance = haversineDistance(
+                session.lat, session.lon,
+                item.hospital.location.coordinates[1],
+                item.hospital.location.coordinates[0]
+              );
+              distanceScore = getDistanceScore(distance);
+            }
+
+            hospitalMap.set(hid, {
+              name: item.hospital.name,
+              contactPhone: item.hospital.contactPhone,
+              coordinates: item.hospital?.location?.coordinates || null,
+              distance: distance != null ? distance.toFixed(1) : null,
+              distanceScore,
+              exactUnits: 0,
+              compatibleDetails: [],
+              totalUnits: 0,
+              bestRank: 99,
+              bestWps: 0,
+            });
+          }
+
+          const entry = hospitalMap.get(hid);
+          const isExact = item.bloodGroup === bloodGroup;
           const recencyScore = getRecencyScore(item.lastUpdatedAt);
           const stockScore = getStockScore(item.units, maxUnits);
-          const rank = compatibilityIndex(bloodGroup, item.bloodGroup); // 0 = exact/most preferred
+          const idx = compatibilityIndex(bloodGroup, item.bloodGroup);
+          const rank = idx === -1 ? 99 : idx;
 
-          let distance = null;
           let wps;
-          if (hasLoc && item.hospital?.location?.coordinates && item.hospital.location.coordinates.length >= 2) {
-            distance = haversineDistance(
-              session.lat, session.lon,
-              item.hospital.location.coordinates[1],
-              item.hospital.location.coordinates[0]
-            );
-            const distanceScore = getDistanceScore(distance);
-            wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * distanceScore);
+          if (hasLoc && entry.distance != null) {
+            wps = (0.40 * stockScore) + (0.35 * recencyScore) + (0.25 * entry.distanceScore);
           } else {
-            // No location or unlocated hospital: rank by stock + recency only.
             wps = (0.60 * stockScore) + (0.40 * recencyScore);
           }
 
-          return {
-            name: item.hospital.name,
-            contactPhone: item.hospital.contactPhone,
-            distance: distance != null ? distance.toFixed(1) : null,
-            unitsAvailable: item.units,
-            group: item.bloodGroup,
-            isExact: item.bloodGroup === bloodGroup,
-            compatibilityRank: rank,
-            wps: wps,
-            coordinates: item.hospital?.location?.coordinates || null
-          };
-        });
+          if (isExact) {
+            entry.exactUnits += item.units;
+          } else {
+            entry.compatibleDetails.push({ group: item.bloodGroup, units: item.units });
+          }
+          entry.totalUnits += item.units;
+          if (rank < entry.bestRank) entry.bestRank = rank;
+          if (wps > entry.bestWps) entry.bestWps = wps;
+        }
 
-        // Prefer the exact/same-ABO group first (conserves scarce universal
-        // stock and reduces cross-type risk); rank by WPS within each tier.
-        const ranked = scored.sort(
-          (a, b) => a.compatibilityRank - b.compatibilityRank || b.wps - a.wps
+        // Rank distinct hospitals: exact matches first, then by WPS score
+        const ranked = Array.from(hospitalMap.values()).sort(
+          (a, b) => a.bestRank - b.bestRank || b.bestWps - a.bestWps
         );
+
         const reply = formatBloodResults(bloodGroup, ranked, hasLoc ? session.lat : null, hasLoc ? session.lon : null);
         session.step = null;
         twiml.message(reply);

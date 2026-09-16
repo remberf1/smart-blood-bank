@@ -12,28 +12,60 @@ const { sendEmail, buildSosAlertEmail } = require('./notificationService');
 // effort and never throws — admin alerting must not break the SOS itself.
 async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
   try {
-    const nearby = await Hospital.find({
-      location: {
-        $near: {
-          $geometry: { type: 'Point', coordinates: [lon, lat] },
-          $maxDistance: radiusKm * 1000, // km -> metres
-        },
-      },
-    }).select('_id').limit(15);
-    if (!nearby.length) return;
-
-    const admins = await User.find({
-      role: 'admin',
-      isActive: true,
-      hospitalId: { $in: nearby.map((h) => h._id) },
-    }).select('email');
-    if (!admins.length) return;
-
-    const e = buildSosAlertEmail({ bloodGroup, radiusKm, lat, lon });
-    for (const a of admins) {
-      if (a.email) sendEmail(a.email, e.subject, e.text, e.html).catch(() => {});
+    let nearby = [];
+    if (lat != null && lon != null) {
+      try {
+        nearby = await Hospital.find({
+          location: {
+            $near: {
+              $geometry: { type: 'Point', coordinates: [lon, lat] },
+              $maxDistance: radiusKm * 1000, // km -> metres
+            },
+          },
+        }).select('_id').limit(15);
+      } catch (geoErr) {
+        console.warn('Geospatial hospital lookup warning:', geoErr.message);
+      }
     }
-    console.log(`📧 SOS: alerted ${admins.length} hospital admin(s) near the request`);
+
+    // Alert admins associated with nearby hospitals OR system superadmins.
+    // If no hospital is within radiusKm, fallback to alerting all active admins/superadmins.
+    let adminQuery = {
+      role: { $in: ['admin', 'superadmin'] },
+      isActive: true,
+    };
+    if (nearby.length > 0) {
+      adminQuery = {
+        isActive: true,
+        $or: [
+          { role: 'admin', hospitalId: { $in: nearby.map((h) => h._id) } },
+          { role: 'superadmin' },
+        ],
+      };
+    }
+
+    const admins = await User.find(adminQuery).select('email');
+    if (admins.length > 0) {
+      const e = buildSosAlertEmail({ bloodGroup, radiusKm, lat, lon });
+      for (const a of admins) {
+        if (a.email) sendEmail(a.email, e.subject, e.text, e.html).catch(() => {});
+      }
+      console.log(`📧 SOS: alerted ${admins.length} hospital admin/superadmin(s) near the request`);
+    }
+
+    // If an admin WhatsApp phone is configured in .env, send a direct WhatsApp alert too
+    const adminPhone = process.env.ADMIN_WHATSAPP_PHONE;
+    if (adminPhone && client) {
+      const cleanPhone = normalizePhone(adminPhone);
+      if (cleanPhone) {
+        const mapUrl = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+        await client.messages.create({
+          body: `🚨 *ADMIN ALERT — EMERGENCY SOS* 🚨\n\nAn emergency SOS for *${bloodGroup}* blood was triggered near coordinates (${lat ?? 'N/A'}, ${lon ?? 'N/A'}).\n\n${mapUrl ? `📍 Location: ${mapUrl}\n` : ''}Eligible donors are being alerted. Please monitor on your dashboard: /dashboard/sos`,
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: `whatsapp:${cleanPhone}`,
+        }).catch((err) => console.warn('Admin WhatsApp SOS dispatch warning:', err.message));
+      }
+    }
   } catch (err) {
     console.error('SOS admin alert failed:', err.message);
   }
