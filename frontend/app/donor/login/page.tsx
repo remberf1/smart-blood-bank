@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import apiClient from '../../api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Droplet, ArrowLeft } from 'lucide-react';
@@ -52,7 +53,7 @@ export default function DonorLogin() {
               </div>
               <div>
                 <Label>Password</Label>
-                <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} required />
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Logging in…' : 'Login'}

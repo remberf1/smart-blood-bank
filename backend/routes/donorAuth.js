@@ -134,21 +134,53 @@ router.get('/profile', authDonor, async (req, res) => {
 router.put('/profile', authDonor, async (req, res) => {
   try {
     const donor = req.donor; // full doc loaded by authDonor (password excluded)
-    const { name, phone, email, sosOptIn, location, allergies } = req.body;
+    const { name, phone, email, bloodGroup, sosOptIn, location, allergies } = req.body;
 
-    if (email && email !== donor.email) {
-      const exists = await Donor.findOne({ email, _id: { $ne: donor._id } });
-      if (exists) return res.status(400).json({ error: 'That email is already in use.' });
-      donor.email = email;
+    const VALID_BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+    if (bloodGroup && VALID_BLOOD_GROUPS.includes(bloodGroup) && bloodGroup !== donor.bloodGroup) {
+      donor.bloodGroup = bloodGroup;
+      try {
+        const qrToken = jwt.sign(
+          { donorId: donor._id, type: 'donor-verify', bloodGroup },
+          process.env.JWT_SECRET
+        );
+        donor.qrCode = await QRCode.toDataURL(qrToken, {
+          errorCorrectionLevel: 'H',
+          margin: 1,
+          width: 300,
+        });
+      } catch (qrErr) {
+        console.warn('QR regeneration warning:', qrErr.message);
+      }
     }
+
+    if (email !== undefined) {
+      const trimmedEmail = typeof email === 'string' ? email.trim() : '';
+      if (trimmedEmail) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(trimmedEmail)) {
+          return res.status(400).json({ error: 'Please enter a valid email address.' });
+        }
+        if (trimmedEmail.toLowerCase() !== (donor.email || '').toLowerCase()) {
+          const exists = await Donor.findOne({ email: trimmedEmail.toLowerCase(), _id: { $ne: donor._id } });
+          if (exists) return res.status(400).json({ error: 'That email is already in use.' });
+          donor.email = trimmedEmail.toLowerCase();
+        }
+      }
+    }
+
     if (phone) {
-      const formatted = formatNigerianPhone(phone) || phone;
+      const formatted = formatNigerianPhone(phone);
+      if (!formatted) {
+        return res.status(400).json({ error: 'Please enter a valid Nigerian phone number (e.g. 08012345678 or +2348012345678).' });
+      }
       if (formatted !== donor.phone) {
         const exists = await Donor.findOne({ phone: formatted, _id: { $ne: donor._id } });
         if (exists) return res.status(400).json({ error: 'That phone number is already in use.' });
         donor.phone = formatted;
       }
     }
+
     if (typeof name === 'string' && name.trim()) donor.name = name.trim();
     if (typeof sosOptIn === 'boolean') donor.sosOptIn = sosOptIn;
     if (typeof allergies === 'string') donor.allergies = allergies.trim();
@@ -172,6 +204,7 @@ router.put('/profile', authDonor, async (req, res) => {
         sosOptIn: donor.sosOptIn,
         location: donor.location,
         allergies: donor.allergies,
+        qrCode: donor.qrCode,
       },
     });
   } catch (err) {

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import apiClient from '../../api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Droplet, ArrowLeft, MapPin } from 'lucide-react';
@@ -35,10 +36,23 @@ export default function DonorRegister() {
 
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
 
+  const maxDob = new Date(Date.now() - 16 * 365.25 * 86400000).toISOString().split('T')[0];
+  const minDob = new Date(Date.now() - 100 * 365.25 * 86400000).toISOString().split('T')[0];
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!form.bloodGroup) { setError('Please select your blood group.'); return; }
+    if (!form.dateOfBirth) { setError('Please enter your date of birth.'); return; }
+    const dob = new Date(form.dateOfBirth);
+    const now = new Date();
+    if (dob > now) { setError('Date of birth cannot be in the future.'); return; }
+    const age = (now.getTime() - dob.getTime()) / (365.25 * 86400000);
+    if (age < 16) { setError('Donors must be at least 16 years old to register.'); return; }
+    if (form.weight && (Number(form.weight) < 30 || Number(form.weight) > 300)) {
+      setError('Please enter a realistic weight between 30 kg and 300 kg.');
+      return;
+    }
     setSubmitting(true);
     try {
       await apiClient.post('/donors/register', {
@@ -97,7 +111,7 @@ export default function DonorRegister() {
               </div>
               <div>
                 <Label>Password *</Label>
-                <Input type="password" value={form.password} onChange={(e) => set({ password: e.target.value })} required minLength={6} />
+                <PasswordInput value={form.password} onChange={(e) => set({ password: e.target.value })} required minLength={6} />
                 <p className="text-xs text-gray-400 mt-1">At least 6 characters — you&apos;ll use this to sign in.</p>
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
@@ -111,7 +125,7 @@ export default function DonorRegister() {
                 </div>
                 <div>
                   <Label>Date of birth *</Label>
-                  <Input type="date" value={form.dateOfBirth} onChange={(e) => set({ dateOfBirth: e.target.value })} required />
+                  <Input type="date" value={form.dateOfBirth} max={maxDob} min={minDob} onChange={(e) => set({ dateOfBirth: e.target.value })} required />
                 </div>
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
@@ -127,7 +141,7 @@ export default function DonorRegister() {
                 </div>
                 <div>
                   <Label>Weight (kg)</Label>
-                  <Input type="number" value={form.weight} onChange={(e) => set({ weight: e.target.value })} placeholder="e.g. 65" />
+                  <Input type="number" min={30} max={300} value={form.weight} onChange={(e) => set({ weight: e.target.value })} placeholder="e.g. 65" />
                 </div>
               </div>
               <p className="text-xs text-gray-400 flex items-center gap-1"><MapPin className="h-3 w-3" /> {locStatus}</p>

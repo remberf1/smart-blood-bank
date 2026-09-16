@@ -60,6 +60,11 @@ export default function SosPage() {
     e.preventDefault();
     setError('');
     if (!bloodGroup) { setError('Select the blood group needed.'); return; }
+    const digits = phone.replace(/\D/g, '');
+    if (!phone.trim() || digits.length < 10 || digits.length > 14) {
+      setError('Please enter a valid Nigerian phone number (e.g., 08012345678 or +2348012345678) so donors and hospitals can contact you.');
+      return;
+    }
     if (!coords) { setError('Share your location so we can find donors near you.'); return; }
     setSubmitting(true);
     try {
@@ -191,8 +196,8 @@ export default function SosPage() {
                   </select>
                 </div>
                 <div>
-                  <Label>Your phone (so a donor can reach you)</Label>
-                  <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08012345678" inputMode="tel" />
+                  <Label>Your phone (so a donor or hospital can reach you) *</Label>
+                  <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08012345678" required />
                 </div>
                 <div>
                   <Label>Your location *</Label>

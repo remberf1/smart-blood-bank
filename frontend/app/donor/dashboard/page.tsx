@@ -5,6 +5,7 @@ import { toast, Toaster } from 'react-hot-toast';
 import apiClient from '../../api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -14,8 +15,10 @@ import {
 import {
   Droplet, LogOut, CalendarPlus, CalendarClock, Phone, Mail,
   ShieldCheck, Clock, MapPin, Pencil, KeyRound, QrCode, Download, Award,
-  Navigation, AlertCircle,
+  Navigation, AlertCircle, AlertTriangle,
 } from 'lucide-react';
+
+const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 interface DonorProfile {
   _id: string; name: string; email: string; phone: string; bloodGroup: string;
@@ -70,12 +73,15 @@ export default function DonorDashboard() {
     name: '',
     email: '',
     phone: '',
+    bloodGroup: '',
     allergies: '',
     sosOptIn: true,
     location: null as { type: string; coordinates: [number, number] } | null,
   });
   const [detectingLocation, setDetectingLocation] = useState(false);
   const [locMsg, setLocMsg] = useState('');
+  const [cancelingAppt, setCancelingAppt] = useState<{ id: string; hospitalName?: string; date?: string } | null>(null);
+  const [canceling, setCanceling] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
@@ -86,6 +92,7 @@ export default function DonorDashboard() {
       name: donor.name,
       email: donor.email || '',
       phone: donor.phone,
+      bloodGroup: donor.bloodGroup || '',
       allergies: donor.allergies || '',
       sosOptIn: donor.sosOptIn,
       location: donor.location || null,
@@ -122,6 +129,10 @@ export default function DonorDashboard() {
   };
 
   const saveProfile = async () => {
+    if (profileForm.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileForm.email.trim())) {
+      toast.error('Please enter a valid email address (e.g., name@example.com).');
+      return;
+    }
     setSavingProfile(true);
     try {
       const res = await apiClient.put('/donor/auth/profile', profileForm);
@@ -131,6 +142,8 @@ export default function DonorDashboard() {
         name: d.name,
         email: d.email,
         phone: d.phone,
+        bloodGroup: d.bloodGroup,
+        qrCode: d.qrCode || prev.qrCode,
         sosOptIn: d.sosOptIn,
         location: d.location,
         allergies: d.allergies,
@@ -198,14 +211,18 @@ export default function DonorDashboard() {
     }
   };
 
-  const handleCancel = async (id: string) => {
-    if (!confirm('Cancel this appointment?')) return;
+  const confirmCancel = async () => {
+    if (!cancelingAppt) return;
+    setCanceling(true);
     try {
-      await apiClient.delete(`/donor/appointments/${id}`);
+      await apiClient.delete(`/donor/appointments/${cancelingAppt.id}`);
       toast.success('Appointment cancelled');
+      setCancelingAppt(null);
       await refreshAppointments();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to cancel');
+      toast.error(err.response?.data?.error || 'Failed to cancel appointment');
+    } finally {
+      setCanceling(false);
     }
   };
 
@@ -271,10 +288,18 @@ export default function DonorDashboard() {
                 <p className="text-red-100 text-sm">Welcome back,</p>
                 <h2 className="text-2xl font-bold">{donor.name}</h2>
               </div>
-              <div className="flex items-center gap-2 bg-white/15 rounded-xl px-4 py-2">
+              <button
+                type="button"
+                onClick={openProfile}
+                title="Wrong entry? Click to edit blood group"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 transition-all rounded-xl px-4 py-2 text-white border border-white/30 shadow-sm cursor-pointer group"
+              >
                 <Droplet className="h-6 w-6" />
                 <span className="text-2xl font-bold">{donor.bloodGroup}</span>
-              </div>
+                <span className="text-[10px] bg-black/20 group-hover:bg-black/40 px-1.5 py-0.5 rounded ml-1 transition-colors flex items-center gap-0.5">
+                  <Pencil className="h-2.5 w-2.5" /> Edit
+                </span>
+              </button>
             </div>
           </div>
           <CardContent className="p-6">
@@ -405,7 +430,16 @@ export default function DonorDashboard() {
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <ApptStatusBadge status={a.status} />
-                      <button onClick={() => handleCancel(a._id)} className="text-red-600 text-xs hover:underline">Cancel</button>
+                      <button
+                        onClick={() => setCancelingAppt({
+                          id: a._id,
+                          hospitalName: a.hospitalId?.name,
+                          date: new Date(a.appointmentDate).toLocaleString(),
+                        })}
+                        className="text-red-600 text-xs hover:underline font-medium cursor-pointer"
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </li>
                 ))}
@@ -437,6 +471,39 @@ export default function DonorDashboard() {
         )}
       </main>
 
+      {/* Custom Cancel Appointment Confirmation Dialog */}
+      <Dialog open={!!cancelingAppt} onOpenChange={(open) => !open && setCancelingAppt(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5 text-red-600" /> Cancel Donation Appointment
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to cancel this scheduled donation appointment? You can book a new one at any time.
+            </DialogDescription>
+          </DialogHeader>
+          {cancelingAppt && (
+            <div className="p-3 bg-red-50/80 border border-red-200 rounded-lg text-xs text-gray-700 space-y-1">
+              <p><strong className="text-gray-900">Hospital:</strong> {cancelingAppt.hospitalName || 'Hospital'}</p>
+              <p><strong className="text-gray-900">Scheduled Time:</strong> {cancelingAppt.date}</p>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setCancelingAppt(null)} disabled={canceling}>
+              Keep Appointment
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmCancel}
+              disabled={canceling}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {canceling ? 'Cancelling…' : 'Yes, Cancel Appointment'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit profile dialog */}
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
         <DialogContent className="sm:max-w-md">
@@ -444,20 +511,40 @@ export default function DonorDashboard() {
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5 text-red-500" /> Edit profile
             </DialogTitle>
-            <DialogDescription>Update your contact details and alert preferences.</DialogDescription>
+            <DialogDescription>Update your contact details, blood group, and alert preferences.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div>
               <Label>Full name</Label>
               <Input value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} />
             </div>
-            <div>
-              <Label>Email</Label>
-              <Input type="email" value={profileForm.email} onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })} />
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <Label>Email</Label>
+                <Input type="email" value={profileForm.email} onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })} placeholder="name@example.com" />
+              </div>
+              <div>
+                <Label>Phone</Label>
+                <Input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="08012345678" />
+              </div>
             </div>
             <div>
-              <Label>Phone</Label>
-              <Input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="08012345678" />
+              <div className="flex items-center justify-between">
+                <Label>Blood group</Label>
+                <span className="text-[11px] text-muted-foreground">Wrong entry? You can change it here</span>
+              </div>
+              <select
+                value={profileForm.bloodGroup}
+                onChange={(e) => setProfileForm({ ...profileForm, bloodGroup: e.target.value })}
+                className="w-full border border-input rounded-md p-2 bg-background focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+              >
+                {BLOOD_GROUPS.map((bg) => (
+                  <option key={bg} value={bg}>{bg}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Updating will refresh your Digital Donor Pass and emergency matching group.
+              </p>
             </div>
             <div>
               <Label>Allergies / Medical Notes</Label>
@@ -525,15 +612,15 @@ export default function DonorDashboard() {
           <div className="space-y-4 py-2">
             <div>
               <Label>Current password</Label>
-              <Input type="password" value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} />
+              <PasswordInput value={pwForm.currentPassword} onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })} />
             </div>
             <div>
               <Label>New password</Label>
-              <Input type="password" value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} placeholder="At least 8 characters" />
+              <PasswordInput value={pwForm.newPassword} onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })} placeholder="At least 8 characters" />
             </div>
             <div>
               <Label>Confirm new password</Label>
-              <Input type="password" value={pwForm.confirm} onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })} />
+              <PasswordInput value={pwForm.confirm} onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })} />
             </div>
           </div>
           <DialogFooter>

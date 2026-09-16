@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const SOSRequest = require('../models/SOSRequest');
 const { auth, isAdmin } = require('../middleware/auth');
 const { triggerSOS } = require('../services/sosService');
+const { formatNigerianPhone } = require('../utils/phone');
 
 // Public emergency trigger — tightly rate-limited to prevent donor-alert spam.
 const sosTriggerLimiter = rateLimit({
@@ -26,7 +27,14 @@ router.post('/trigger', sosTriggerLimiter, async (req, res) => {
     if (lat == null || lon == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lon))) {
       return res.status(400).json({ error: 'Your location is required to find nearby donors.' });
     }
-    const result = await triggerSOS(bloodGroup, Number(lat), Number(lon), phone || '', 15);
+    if (!phone || typeof phone !== 'string' || !phone.trim()) {
+      return res.status(400).json({ error: 'Please enter your phone number so donors and hospitals can reach you.' });
+    }
+    const formattedPhone = formatNigerianPhone(phone);
+    if (!formattedPhone) {
+      return res.status(400).json({ error: 'Invalid phone number. Please enter a valid Nigerian number (e.g., 08012345678 or +2348012345678).' });
+    }
+    const result = await triggerSOS(bloodGroup, Number(lat), Number(lon), formattedPhone, 15);
     res.status(201).json(result);
   } catch (err) {
     console.error('SOS trigger error:', err);

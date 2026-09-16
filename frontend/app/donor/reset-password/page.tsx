@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Droplet, CheckCircle2, ArrowLeft } from 'lucide-react';
@@ -72,11 +73,11 @@ export default function DonorResetPassword() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <Label>New password</Label>
-                  <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" required />
+                  <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" required />
                 </div>
                 <div>
                   <Label>Confirm password</Label>
-                  <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+                  <PasswordInput value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
                 </div>
                 {error && <p className="text-red-500 text-sm">{error}</p>}
                 <Button type="submit" className="w-full" disabled={loading}>

@@ -33,6 +33,16 @@ const updateUserSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+const donorDob = z.coerce.date().refine((dob) => {
+  if (Number.isNaN(dob.getTime())) return false;
+  const now = new Date();
+  if (dob > now) return false;
+  const age = (now.getTime() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+  return age >= 16 && age <= 100;
+}, {
+  message: 'Donors must be at least 16 years old and date of birth cannot be in the future',
+});
+
 const donorRegisterSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   phone: z.string().min(1, 'Phone is required'),
@@ -43,9 +53,9 @@ const donorRegisterSchema = z.object({
     type: z.literal('Point').optional(),
     coordinates: z.array(z.number()).length(2, 'coordinates must be [lng, lat]'),
   }),
-  dateOfBirth: z.coerce.date(),
+  dateOfBirth: donorDob,
   gender: z.enum(['Male', 'Female', 'Other']).optional(),
-  weight: z.coerce.number().positive().optional(),
+  weight: z.coerce.number().min(30, 'Weight must be at least 30 kg').max(300, 'Weight cannot exceed 300 kg').optional(),
   lastDonationDate: z.coerce.date().optional(),
 });
 
