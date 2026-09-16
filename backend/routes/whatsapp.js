@@ -88,27 +88,44 @@ Reply with a number (1, 2, 3, 4, 5, or 0)`;
 }
 
 function formatRequestCard(r) {
+  const rawStatus = (r.deliveryStatus || r.status || 'pending').toLowerCase();
   const statusEmoji = {
-    pending: '⏳ PENDING (Awaiting hospital assignment)',
-    approved: '✅ APPROVED & ASSIGNED',
-    fulfilled: '🎉 FULFILLED',
+    pending: '⏳ PENDING (Matching in progress)',
+    approved: '✅ APPROVED',
+    'in-transit': '🚑 IN TRANSIT (On the way)',
     delivered: '📦 DELIVERED',
-    rejected: '❌ REJECTED',
+    fulfilled: '🎉 FULFILLED',
     cancelled: '🚫 CANCELLED',
-  }[r.status] || (r.status ? r.status.toUpperCase() : 'UNKNOWN');
+    rejected: '❌ REJECTED',
+  }[rawStatus] || rawStatus.toUpperCase();
 
   const ref = r._id.toString().slice(-6).toUpperCase();
-  const hospital = r.allocatedHospitalId || r.preferredHospitalId;
-  const hospitalName = hospital ? hospital.name : 'Pending Assignment';
+  const allocated = r.allocatedHospitalId;
+  const preferred = r.preferredHospitalId;
+  const hospital = allocated || preferred;
+
+  const quantity = r.units ?? r.unitsRequested ?? r.oxygenCylindersRequested ?? 1;
   const resourceDesc = r.resourceType === 'blood'
-    ? `${r.unitsRequested || 1} unit(s) of ${r.bloodGroup}`
-    : `${r.oxygenCylindersRequested || 1} cylinder(s) of Oxygen`;
+    ? `${quantity} unit(s) of ${r.bloodGroup || 'Blood'}`
+    : `${quantity} cylinder(s) of Oxygen`;
 
   let card = `📋 *REQUEST #${ref}*\n`;
   card += `📌 Status: *${statusEmoji}*\n`;
-  card += `🩺 Patient: ${r.patientName}\n`;
+  card += `🩺 Patient: ${r.patientName || 'Patient'}\n`;
   card += `🩸 Resource: ${resourceDesc}\n`;
-  card += `🏥 Fulfilling Hospital: *${hospitalName}*\n`;
+
+  if (r.urgency) {
+    const urgencyIcon = r.urgency === 'emergency' ? '🚨' : r.urgency === 'scheduled' ? '🗓️' : '⏱️';
+    card += `${urgencyIcon} Urgency: *${r.urgency.toUpperCase()}*\n`;
+  }
+
+  if (allocated && allocated.name) {
+    card += `🏥 Allocated Hospital: *${allocated.name}*\n`;
+  } else if (preferred && preferred.name) {
+    card += `🏥 Preferred Hospital: *${preferred.name}* _(Matching in progress)_\n`;
+  } else {
+    card += `🏥 Fulfilling Hospital: Pending Assignment\n`;
+  }
 
   if (r.destinationFacility) {
     card += `📍 Destination: ${r.destinationFacility}`;
@@ -127,8 +144,9 @@ function formatRequestCard(r) {
   if (r.deliveryAddress) {
     card += `🚚 Delivery: ${r.deliveryAddress}\n`;
   }
-  if (r.scheduledFor) {
-    card += `🗓️ Scheduled: ${new Date(r.scheduledFor).toLocaleString('en-GB')}\n`;
+  const scheduled = r.scheduledTime || r.scheduledFor;
+  if (scheduled) {
+    card += `🗓️ Scheduled: ${new Date(scheduled).toLocaleString('en-GB')}\n`;
   }
   if (r.cancellationReason) {
     card += `⚠️ Cancellation: ${r.cancellationReason}\n`;
