@@ -12,6 +12,7 @@ the lag input for the next, so lag/rolling features stay consistent across the
 horizon.
 """
 from __future__ import annotations
+from contextlib import asynccontextmanager
 import datetime as dt
 import json
 from pathlib import Path
@@ -27,8 +28,6 @@ HERE = Path(__file__).parent
 MODEL_PATH = HERE / "model.json"
 META_PATH = HERE / "meta.json"
 
-app = FastAPI(title="Smart Blood Bank — Demand Prediction", version="1.0.0")
-
 _booster: xgb.Booster | None = None
 _meta: dict = {}
 
@@ -43,9 +42,13 @@ def _load():
         _meta = json.loads(META_PATH.read_text())
 
 
-@app.on_event("startup")
-def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     _load()
+    yield
+
+
+app = FastAPI(title="Smart Blood Bank — Demand Prediction", version="1.0.0", lifespan=lifespan)
 
 
 class Profile(BaseModel):
@@ -57,25 +60,25 @@ class Profile(BaseModel):
 
 
 class PredictRequest(BaseModel):
-    profile: Profile = Profile()
+    profile: Profile = Field(default_factory=Profile)
     blood_group: str
     start_date: str | None = None            # ISO date; defaults to today
     horizon_days: int = Field(14, ge=1, le=90)
-    recent: list[float] = []                 # daily demand, oldest -> newest
-    context: dict = {}                       # accident_index / crime_index, held constant
+    recent: list[float] = Field(default_factory=list)                 # daily demand, oldest -> newest
+    context: dict = Field(default_factory=dict)                       # accident_index / crime_index, held constant
 
 
 class GroupSeries(BaseModel):
     blood_group: str
-    recent: list[float] = []
+    recent: list[float] = Field(default_factory=list)
 
 
 class BatchRequest(BaseModel):
-    profile: Profile = Profile()
+    profile: Profile = Field(default_factory=Profile)
     start_date: str | None = None
     horizon_days: int = Field(14, ge=1, le=90)
-    context: dict = {}
-    groups: list[GroupSeries] = []           # empty -> all 8 groups with no history
+    context: dict = Field(default_factory=dict)
+    groups: list[GroupSeries] = Field(default_factory=list)           # empty -> all 8 groups with no history
 
 
 def _predict_one(profile: dict, group: str, start: dt.date, horizon: int,
@@ -98,7 +101,12 @@ def _predict_one(profile: dict, group: str, start: dt.date, horizon: int,
 
 
 def _start_date(s: str | None) -> dt.date:
-    return dt.date.fromisoformat(s[:10]) if s else dt.date.today()
+    if not s:
+        return dt.date.today()
+    try:
+        return dt.date.fromisoformat(s[:10])
+    except (ValueError, TypeError):
+        return dt.date.today()
 
 
 @app.get("/health")
