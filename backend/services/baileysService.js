@@ -97,12 +97,14 @@ async function initBaileys() {
             continue;
           }
 
-          const isSelf = Boolean(msg.key.fromMe);
+          // Never reply to messages sent by the bot's own account / line
+          if (msg.key.fromMe) continue;
+
           const userJid = sock.user ? jidNormalizedUser(sock.user.id) : '';
           const normalizedRemote = jidNormalizedUser(remoteJid);
 
-          // If fromMe is true, only allow if the user is messaging themselves ("Message yourself" note)
-          if (isSelf && normalizedRemote !== userJid) {
+          // Never reply to self chat (Note to Self / Message yourself)
+          if (userJid && normalizedRemote === userJid) {
             continue;
           }
 
@@ -139,12 +141,7 @@ async function initBaileys() {
 
           const fromPhone = normalizedRemote.split('@')[0];
 
-          // Prevent loop on bot's own responses in self-chat
-          if (isSelf && text.startsWith('🏥 *Welcome to Smart Blood Bank*')) {
-            continue;
-          }
-
-          console.log(`📩 [Baileys] Received from ${fromPhone} (${remoteJid}): "${text}" (isSelf: ${isSelf})`);
+          console.log(`📩 [Baileys] Received from ${fromPhone} (${remoteJid}): "${text}"`);
 
           const replyText = await handleIncomingMessage({
             fromPhone,
