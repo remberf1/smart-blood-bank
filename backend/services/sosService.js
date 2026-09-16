@@ -186,6 +186,36 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
   // Also alert the admins of nearby hospitals (best-effort, fire-and-forget).
   alertNearbyHospitalAdmins(bloodGroup, userLat, userLon, effectiveRadius);
 
+  // Compute nearest hospital so the patient / web interface can display immediate contact info
+  let nearestHospital = null;
+  if (userLat != null && userLon != null) {
+    try {
+      const hospitals = await Hospital.find({
+        'location.coordinates': { $exists: true, $ne: [] },
+      }).select('name address contactPhone location');
+      if (hospitals.length > 0) {
+        const withDist = hospitals
+          .map((h) => {
+            const coords = h.location?.coordinates || [];
+            const dist = coords.length >= 2 ? haversineDistance(userLat, userLon, coords[1], coords[0]) : null;
+            return {
+              id: h._id,
+              name: h.name,
+              address: h.address,
+              phone: h.contactPhone,
+              distanceKm: dist != null ? Math.round(dist * 10) / 10 : null,
+              coordinates: coords,
+            };
+          })
+          .filter((h) => h.distanceKm != null)
+          .sort((a, b) => a.distanceKm - b.distanceKm);
+        nearestHospital = withDist[0] || null;
+      }
+    } catch (hospErr) {
+      console.warn('Error locating nearest hospital in SOS:', hospErr.message);
+    }
+  }
+
   console.log(`📊 SOS Result: ${alertedCount} of ${donorsWithDistance.length} donors alerted`);
 
   return {
@@ -195,7 +225,8 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
     radiusKm: effectiveRadius,
     widened: effectiveRadius > radiusKm,
     donorsFound: donorsWithDistance.length,
-    donorsAlerted: alertedCount
+    donorsAlerted: alertedCount,
+    nearestHospital,
   };
 }
 

@@ -240,7 +240,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main content */}
       <main className="lg:ml-64 min-h-screen">
-        <div className="mx-auto max-w-[1400px] p-5 md:p-8 pt-16 lg:pt-8">{children}</div>
+        <div className="mx-auto max-w-[1400px] p-5 md:p-8 pt-16 lg:pt-8">
+          {(badges.sos || 0) > 0 && pathname !== '/dashboard/sos' && (
+            <div className="mb-6 p-4 rounded-xl bg-red-600 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
+                  <Siren className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-bold text-sm">🚨 ACTIVE EMERGENCY SOS IN PROGRESS</p>
+                  <p className="text-xs text-red-100">
+                    {badges.sos} urgent emergency alert(s) pending in your coverage area.
+                  </p>
+                </div>
+              </div>
+              <Link
+                href="/dashboard/sos"
+                className="px-4 py-1.5 rounded-lg bg-white text-red-700 font-bold text-xs hover:bg-red-50 transition-colors shrink-0 shadow-sm"
+              >
+                Open SOS Center →
+              </Link>
+            </div>
+          )}
+          {children}
+        </div>
       </main>
     </div>
   );

@@ -6,11 +6,26 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Siren, ArrowLeft, MapPin, CheckCircle2 } from 'lucide-react';
+import { Siren, ArrowLeft, MapPin, CheckCircle2, Phone } from 'lucide-react';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
-type Result = { donorsFound: number; donorsAlerted: number; radiusKm: number; widened: boolean };
+type NearestHospital = {
+  id: string;
+  name: string;
+  address?: string;
+  phone: string;
+  distanceKm: number;
+  coordinates: [number, number];
+};
+
+type Result = {
+  donorsFound: number;
+  donorsAlerted: number;
+  radiusKm: number;
+  widened: boolean;
+  nearestHospital?: NearestHospital | null;
+};
 
 export default function SosPage() {
   const [bloodGroup, setBloodGroup] = useState('');
@@ -75,11 +90,11 @@ export default function SosPage() {
 
         {result ? (
           <Card>
-            <CardContent className="p-8 text-center space-y-3">
+            <CardContent className="p-8 text-center space-y-4">
               <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto" />
               {result.donorsFound > 0 ? (
                 <>
-                  <h2 className="text-lg font-bold text-gray-800">Help is on the way</h2>
+                  <h2 className="text-xl font-bold text-gray-900">Emergency Alert Broadcasted</h2>
                   <p className="text-gray-600">
                     <strong>{result.donorsAlerted}</strong> compatible donor(s) within{' '}
                     <strong>{result.radiusKm}km</strong> have been alerted
@@ -89,17 +104,63 @@ export default function SosPage() {
                 </>
               ) : (
                 <>
-                  <h2 className="text-lg font-bold text-gray-800">No donors found nearby</h2>
+                  <h2 className="text-xl font-bold text-gray-900">No Donors Found Nearby</h2>
                   <p className="text-gray-600">
-                    We couldn&apos;t reach a compatible donor near you right now. Please contact your nearest
-                    hospital or blood bank directly and keep trying.
+                    We couldn&apos;t reach registered donors near you right now. Please immediately call or visit
+                    the nearest hospital below.
                   </p>
                 </>
               )}
-              <div className="pt-2">
+
+              {result.nearestHospital && (
+                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-left space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-red-700 flex items-center gap-1.5">
+                      <Siren className="h-3.5 w-3.5" /> Nearest Hospital & Blood Bank Admin
+                    </span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                      {result.nearestHospital.distanceKm} km away
+                    </span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-base">{result.nearestHospital.name}</h3>
+                    {result.nearestHospital.address && (
+                      <p className="text-xs text-gray-500 mt-0.5">{result.nearestHospital.address}</p>
+                    )}
+                  </div>
+                  <div className="pt-1 flex flex-wrap gap-2">
+                    {result.nearestHospital.phone && (
+                      <a
+                        href={`tel:${result.nearestHospital.phone}`}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition-colors shadow-sm"
+                      >
+                        <Phone className="h-4 w-4" /> Call Blood Bank: {result.nearestHospital.phone}
+                      </a>
+                    )}
+                    {result.nearestHospital.coordinates && (
+                      <a
+                        href={`https://maps.google.com/?q=${result.nearestHospital.coordinates[1]},${result.nearestHospital.coordinates[0]}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        <MapPin className="h-4 w-4 text-red-600" /> Directions
+                      </a>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500 italic">
+                    Hospital staff and administrators have been alerted to standby for this emergency.
+                  </p>
+                </div>
+              )}
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
                 <Link href="/request">
-                  <Button variant="outline">Also submit a blood request</Button>
+                  <Button variant="outline" className="w-full sm:w-auto">Also submit a blood request</Button>
                 </Link>
+                <Button variant="ghost" onClick={() => setResult(null)} className="w-full sm:w-auto">
+                  Raise another alert
+                </Button>
               </div>
             </CardContent>
           </Card>
