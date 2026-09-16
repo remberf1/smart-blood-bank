@@ -63,13 +63,14 @@ setInterval(() => {
 function getLocationPrompt() {
   return `📍 *SHARE YOUR LOCATION*
 
-To find the nearest blood or donors, please share your location:
+To find the nearest hospitals and eligible donors, please share your location:
 
-1️⃣ Tap 📎 (attach)
-2️⃣ Choose *Location*
-3️⃣ Send *Current location*
+📎 Tap the paperclip icon (or +) at the bottom
+📍 Select *Location*
+📲 Tap *Send your current location*
 
-We use this only to rank results by distance.`;
+_💡 Or simply reply with your city name (e.g. "Ife", "Osogbo", "Lagos")._
+_Type MENU to return._`;
 }
 
 function getMainMenu() {
@@ -378,6 +379,48 @@ router.post('/webhook', validateTwilio, async (req, res) => {
     } else {
       twiml.message(`❌ Could not read that location. Please try sharing your current location again.`);
     }
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml.toString());
+    return;
+  }
+
+  // Handle text messages sent while awaiting a location pin (e.g. city name or numbers)
+  if (session.step === 'awaiting_location_for_sos' || session.step === 'awaiting_location_for_blood') {
+    const cityCoords = {
+      ife: { lat: 7.4897, lon: 4.5421, name: 'Ile-Ife' },
+      'ile-ife': { lat: 7.4897, lon: 4.5421, name: 'Ile-Ife' },
+      'ile ife': { lat: 7.4897, lon: 4.5421, name: 'Ile-Ife' },
+      osogbo: { lat: 7.7827, lon: 4.5418, name: 'Osogbo' },
+      oshogbo: { lat: 7.7827, lon: 4.5418, name: 'Osogbo' },
+      lagos: { lat: 6.5244, lon: 3.3792, name: 'Lagos' },
+      ibadan: { lat: 7.3775, lon: 3.9470, name: 'Ibadan' },
+      abuja: { lat: 9.0765, lon: 7.3986, name: 'Abuja' },
+      akure: { lat: 7.2571, lon: 5.2058, name: 'Akure' },
+      ilesa: { lat: 7.6292, lon: 4.7417, name: 'Ilesa' },
+      ilesha: { lat: 7.6292, lon: 4.7417, name: 'Ilesa' },
+      ede: { lat: 7.7397, lon: 4.4428, name: 'Ede' },
+    };
+
+    const cleanInput = incomingMsg.toLowerCase().trim();
+    if (cityCoords[cleanInput]) {
+      const match = cityCoords[cleanInput];
+      session.lat = match.lat;
+      session.lon = match.lon;
+      session.hasLocation = true;
+
+      if (session.step === 'awaiting_location_for_sos') {
+        session.step = 'awaiting_sos_blood_group';
+        twiml.message(`📍 Location set to *${match.name}*!\n\n🚨 *SOS EMERGENCY* 🚨\n\nReply with the blood group needed (e.g., O+, A-, B+, AB-).`);
+      } else {
+        session.step = 'awaiting_blood_group';
+        twiml.message(`📍 Location set to *${match.name}*!\n\n${getBloodGroupMenu()}`);
+      }
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end(twiml.toString());
+      return;
+    }
+
+    twiml.message(`⚠️ *Location Needed*\n\nPlease do not reply with numbers.\n\n👉 Tap 📎 (paperclip or +) → *Location* → *Send Your Current Location*\n👉 Or reply with your city name (e.g., "Ife", "Osogbo", "Lagos")\n\n_Type MENU to return to main menu._`);
     res.writeHead(200, { 'Content-Type': 'text/xml' });
     res.end(twiml.toString());
     return;
