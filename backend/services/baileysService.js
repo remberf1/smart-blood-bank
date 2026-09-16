@@ -87,26 +87,64 @@ async function initBaileys() {
 
     sock.ev.on('messages.upsert', async (m) => {
       try {
-        if (m.type !== 'notify') return;
+        if (!m.messages || !m.messages.length) return;
 
         for (const msg of m.messages) {
-          if (!msg.message || msg.key.fromMe) continue;
-          const remoteJid = msg.key.remoteJid;
-          if (!remoteJid || remoteJid.includes('@broadcast') || remoteJid.includes('@g.us')) continue;
+          if (!msg.message) continue;
 
-          const fromPhone = remoteJid.split('@')[0];
+          const remoteJid = msg.key.remoteJid;
+          if (!remoteJid || remoteJid.includes('@broadcast') || remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') {
+            continue;
+          }
+
+          const isSelf = Boolean(msg.key.fromMe);
+          const userJid = sock.user ? jidNormalizedUser(sock.user.id) : '';
+          const normalizedRemote = jidNormalizedUser(remoteJid);
+
+          // If fromMe is true, only allow if the user is messaging themselves ("Message yourself" note)
+          if (isSelf && normalizedRemote !== userJid) {
+            continue;
+          }
+
+          // Unwrap modern message wrappers (ephemeral, viewOnce, etc.)
+          let content = msg.message;
+          while (
+            content?.ephemeralMessage ||
+            content?.viewOnceMessage ||
+            content?.viewOnceMessageV2 ||
+            content?.documentWithCaptionMessage
+          ) {
+            content =
+              content?.ephemeralMessage?.message ||
+              content?.viewOnceMessage?.message ||
+              content?.viewOnceMessageV2?.message ||
+              content?.documentWithCaptionMessage?.message;
+          }
 
           // Extract text content
           const text =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            msg.message.imageMessage?.caption ||
+            content?.conversation ||
+            content?.extendedTextMessage?.text ||
+            content?.imageMessage?.caption ||
+            content?.videoMessage?.caption ||
+            content?.buttonsResponseMessage?.selectedButtonId ||
+            content?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+            content?.interactiveResponseMessage?.body?.text ||
             '';
 
           // Extract location if shared
-          const location = msg.message.locationMessage || msg.message.liveLocationMessage;
+          const location = content?.locationMessage || content?.liveLocationMessage;
           const latitude = location ? location.degreesLatitude : null;
           const longitude = location ? location.degreesLongitude : null;
+
+          const fromPhone = normalizedRemote.split('@')[0];
+
+          // Prevent loop on bot's own responses in self-chat
+          if (isSelf && text.startsWith('🏥 *Welcome to Smart Blood Bank*')) {
+            continue;
+          }
+
+          console.log(`📩 [Baileys] Received from ${fromPhone} (${remoteJid}): "${text}" (isSelf: ${isSelf})`);
 
           const replyText = await handleIncomingMessage({
             fromPhone,
@@ -116,11 +154,13 @@ async function initBaileys() {
           });
 
           if (replyText && sock) {
+            console.log(`📤 [Baileys] Sending reply to ${remoteJid}...`);
             await sock.sendMessage(remoteJid, { text: replyText });
+            console.log(`✅ [Baileys] Reply delivered to ${remoteJid}`);
           }
         }
       } catch (msgErr) {
-        console.error('Error processing Baileys incoming message:', msgErr);
+        console.error('❌ [Baileys] Error processing incoming message:', msgErr);
       }
     });
   } catch (initErr) {

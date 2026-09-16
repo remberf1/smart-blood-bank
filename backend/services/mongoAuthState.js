@@ -1,4 +1,4 @@
-const { initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
+const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
 const WhatsAppSession = require('../models/WhatsAppSession');
 
 /**
@@ -30,7 +30,10 @@ async function useMongoAuthState(sessionId = 'default') {
           const docs = await WhatsAppSession.find({ _id: { $in: keysToFetch } });
           for (const doc of docs) {
             try {
-              const parsed = JSON.parse(doc.data, BufferJSON.reviver);
+              let parsed = JSON.parse(doc.data, BufferJSON.reviver);
+              if (type === 'app-state-sync-key' && parsed) {
+                parsed = proto.Message.AppStateSyncKeyData.fromObject(parsed);
+              }
               const keyId = doc._id.replace(`${sessionId}:${type}:`, '');
               data[keyId] = parsed;
             } catch (err) {

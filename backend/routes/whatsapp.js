@@ -175,7 +175,20 @@ router.get('/qr', (req, res) => {
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
-  ${status.connected ? '' : '<script>setInterval(() => { fetch("/api/whatsapp/status").then(r => r.json()).then(d => { if (d.baileys?.connected || d.baileys?.hasQr) location.reload(); }); }, 4000);</script>'}
+  <script>
+    const isInitiallyConnected = ${JSON.stringify(status.connected)};
+    setInterval(() => {
+      fetch('/api/whatsapp/status')
+        .then(r => r.json())
+        .then(d => {
+          const nowConnected = Boolean(d.baileys?.connected);
+          if (nowConnected !== isInitiallyConnected) {
+            location.reload();
+          }
+        })
+        .catch(() => {});
+    }, 2500);
+  </script>
 </head>
 <body>
   <div class="card">
