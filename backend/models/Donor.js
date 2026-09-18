@@ -34,6 +34,12 @@ const donorSchema = new mongoose.Schema({
   allergies: { type: String, default: '' },
   nin: { type: String, trim: true, select: false },
   ninMasked: { type: String, trim: true },
+  donationTypePreference: {
+    type: String,
+    enum: ['WHOLE_BLOOD', 'PLATELET_APHERESIS', 'PLASMA_APHERESIS'],
+    default: 'WHOLE_BLOOD',
+  },
+  nonRemunerationDeclared: { type: Boolean, default: true },
   notes: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -49,6 +55,15 @@ const donorSchema = new mongoose.Schema({
     default: "local",
   },
   emailVerified: { type: Boolean, default: false },
+  // NDPA 2023 Compliance Fields
+  consentTimestamp: { type: Date, default: Date.now },
+  consentVersion: { type: String, default: 'NDPA-2023-v1.0' },
+  retentionUntil: {
+    type: Date,
+    default: () => new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000), // 5-year statutory medical retention
+  },
+  isDeleted: { type: Boolean, default: false },
+  deletedAt: { type: Date },
 });
 
 donorSchema.index({ location: "2dsphere" });

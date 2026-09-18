@@ -37,6 +37,8 @@ interface BloodInventoryItem {
   _id: string;
   hospitalId: Hospital;
   bloodGroup: string;
+  componentType?: "WHOLE_BLOOD" | "PACKED_RED_CELLS" | "PLATELET_CONCENTRATE" | "FRESH_FROZEN_PLASMA" | "CRYOPRECIPITATE";
+  storageTemperature?: string;
   units: number;
   lastUpdatedAt: string;
 }
@@ -50,6 +52,18 @@ interface OxygenInventoryItem {
 }
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+const COMPONENT_TYPES = [
+  { value: "PACKED_RED_CELLS", label: "Packed Red Cells (PRBC)", shortLabel: "PRBC", temp: "2°C to 6°C", shelfLife: "42 days", alertDays: 7, color: "bg-red-100 text-red-800 border-red-200" },
+  { value: "WHOLE_BLOOD", label: "Whole Blood", shortLabel: "Whole Blood", temp: "2°C to 6°C", shelfLife: "35 days", alertDays: 7, color: "bg-rose-100 text-rose-800 border-rose-200" },
+  { value: "PLATELET_CONCENTRATE", label: "Platelet Concentrate", shortLabel: "Platelets", temp: "20°C to 24°C (agitation)", shelfLife: "5 days", alertDays: 1, color: "bg-amber-100 text-amber-800 border-amber-200" },
+  { value: "FRESH_FROZEN_PLASMA", label: "Fresh Frozen Plasma (FFP)", shortLabel: "FFP", temp: "-18°C or colder", shelfLife: "1 year (thawed in lab)", alertDays: 30, color: "bg-blue-100 text-blue-800 border-blue-200" },
+  { value: "CRYOPRECIPITATE", label: "Cryoprecipitate", shortLabel: "Cryo", temp: "-18°C or colder", shelfLife: "1 year (thawed in lab)", alertDays: 30, color: "bg-cyan-100 text-cyan-800 border-cyan-200" },
+] as const;
+
+const COMPONENT_MAP: Record<string, typeof COMPONENT_TYPES[number]> = Object.fromEntries(
+  COMPONENT_TYPES.map((c) => [c.value, c])
+);
 
 export default function InventoryPage() {
   const { user } = useAuth();
@@ -81,6 +95,7 @@ export default function InventoryPage() {
   const [bloodForm, setBloodForm] = useState({
     hospitalId: "",
     bloodGroup: "O+",
+    componentType: "PACKED_RED_CELLS" as typeof COMPONENT_TYPES[number]["value"],
     units: 0,
   });
   const [oxygenForm, setOxygenForm] = useState({
@@ -89,8 +104,8 @@ export default function InventoryPage() {
     oxygenFillStatus: "empty" as "full" | "partial" | "empty",
   });
 
-  // Blood table filters + pagination (the table can have a row per hospital ×
-  // group, so it gets long — condense it).
+  // Blood table filters + pagination
+  const [componentFilter, setComponentFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [hospitalFilter, setHospitalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState(""); // '', 'available', 'low', 'out'
@@ -138,6 +153,7 @@ export default function InventoryPage() {
           hospitalId: bloodForm.hospitalId,
           resourceType: "blood",
           bloodGroup: bloodForm.bloodGroup,
+          componentType: bloodForm.componentType,
           units: bloodForm.units,
         });
         toast.success("Blood added");
@@ -156,6 +172,7 @@ export default function InventoryPage() {
     setBloodForm({
       hospitalId: hId,
       bloodGroup: item.bloodGroup,
+      componentType: (item.componentType || "PACKED_RED_CELLS") as typeof COMPONENT_TYPES[number]["value"],
       units: item.units,
     });
     setBloodDialogOpen(true);
@@ -226,7 +243,12 @@ export default function InventoryPage() {
   const resetBloodForm = () => {
     setEditingBlood(null);
     // Non-superadmins can only add to their own hospital; default it in.
-    setBloodForm({ hospitalId: isSuperadmin ? "" : ownHospitalId, bloodGroup: "O+", units: 0 });
+    setBloodForm({
+      hospitalId: isSuperadmin ? "" : ownHospitalId,
+      bloodGroup: "O+",
+      componentType: "PACKED_RED_CELLS",
+      units: 0,
+    });
   };
 
   const resetOxygenForm = () => {
@@ -254,12 +276,12 @@ export default function InventoryPage() {
     0,
   );
 
-  // Availability per blood group across the (optionally hospital-filtered) rows —
+  // Availability per blood group across the (optionally hospital- and component-filtered) rows —
   // shows at a glance which of the 8 groups are out/low, including groups with
   // no rows at all (which the table alone can't show).
-  const overviewRows = hospitalFilter
-    ? validBloodInventory.filter((i) => i.hospitalId?._id === hospitalFilter)
-    : validBloodInventory;
+  const overviewRows = validBloodInventory
+    .filter((i) => !hospitalFilter || i.hospitalId?._id === hospitalFilter)
+    .filter((i) => !componentFilter || (i.componentType || "PACKED_RED_CELLS") === componentFilter);
   const groupTotals = BLOOD_GROUPS.map((bg) => ({
     bloodGroup: bg,
     units: overviewRows
@@ -271,6 +293,7 @@ export default function InventoryPage() {
   // Filtered + paginated detail rows.
   const filteredBlood = validBloodInventory
     .filter((i) => {
+      if (componentFilter && (i.componentType || "PACKED_RED_CELLS") !== componentFilter) return false;
       if (groupFilter && i.bloodGroup !== groupFilter) return false;
       if (hospitalFilter && i.hospitalId?._id !== hospitalFilter) return false;
       if (invSearch && !(i.hospitalId?.name || "").toLowerCase().includes(invSearch.toLowerCase())) return false;
@@ -297,6 +320,19 @@ export default function InventoryPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Inventory" subtitle="Blood and oxygen stock across hospitals" />
+
+      {/* Section 53 NHA 2014 Statutory Notice */}
+      <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-4 text-xs sm:text-sm text-amber-950 shadow-xs flex items-start gap-3">
+        <span className="text-xl shrink-0 mt-0.5">⚖️</span>
+        <div className="space-y-1">
+          <p className="font-bold">
+            National Health Act 2014 (Section 53) &amp; NBSC Legal Notice
+          </p>
+          <p className="text-amber-900 leading-relaxed text-xs">
+            Commercial sale and purchase of human blood is criminalised in Nigeria (penalties up to ₦100,000 fine / 1-year imprisonment). Blood units have zero commercial price. Hospital fees strictly reflect approved clinical processing fees (₦8,000–₦15,000 per unit under National Blood Policy) covering mandatory viral screening (HIV 1/2, HBV, HCV, Syphilis), ABO/Rh typing, component separation, and continuous cold-chain preservation.
+          </p>
+        </div>
+      </div>
 
       {!canManageStock && (
         <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900 flex items-center justify-between">
@@ -473,6 +509,35 @@ export default function InventoryPage() {
             </CardContent>
           </Card>
 
+          {/* Component Type Filter Pills */}
+          <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-muted/40 rounded-xl border border-border">
+            <span className="text-xs font-semibold text-muted-foreground px-2">Component:</span>
+            <button
+              type="button"
+              onClick={() => { setComponentFilter(""); resetBloodPage(); }}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                !componentFilter ? "bg-white text-gray-900 shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-gray-900"
+              }`}
+            >
+              All Components
+            </button>
+            {COMPONENT_TYPES.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => { setComponentFilter(c.value === componentFilter ? "" : c.value); resetBloodPage(); }}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+                  componentFilter === c.value
+                    ? "bg-white text-gray-900 shadow-xs ring-1 ring-border"
+                    : "text-muted-foreground hover:text-gray-900"
+                }`}
+              >
+                <span>{c.shortLabel}</span>
+                <span className="text-[10px] opacity-75 font-normal">({c.temp})</span>
+              </button>
+            ))}
+          </div>
+
           {/* Filters + Add */}
           <div className="flex flex-wrap items-center gap-3">
             <Input
@@ -509,9 +574,9 @@ export default function InventoryPage() {
               <option value="low">Low (&lt;10)</option>
               <option value="out">Out of stock</option>
             </select>
-            {(groupFilter || hospitalFilter || statusFilter || invSearch) && (
+            {(groupFilter || hospitalFilter || statusFilter || invSearch || componentFilter) && (
               <Button variant="ghost" size="sm" className="text-muted-foreground"
-                onClick={() => { setGroupFilter(""); setHospitalFilter(""); setStatusFilter(""); setInvSearch(""); resetBloodPage(); }}>
+                onClick={() => { setComponentFilter(""); setGroupFilter(""); setHospitalFilter(""); setStatusFilter(""); setInvSearch(""); resetBloodPage(); }}>
                 Clear
               </Button>
             )}
@@ -535,6 +600,8 @@ export default function InventoryPage() {
                   <TableRow>
                     <TableHead>Hospital</TableHead>
                     <TableHead className="text-center">Blood Group</TableHead>
+                    <TableHead className="text-center">Component</TableHead>
+                    <TableHead className="text-center">Storage Temp</TableHead>
                     <TableHead className="text-center">
                       <button type="button" onClick={() => toggleInvSort("units")} className="inline-flex items-center gap-1 hover:text-foreground justify-center">
                         Units {invSort.key === "units" ? (invSort.dir === "asc" ? "↑" : "↓") : ""}
@@ -552,12 +619,13 @@ export default function InventoryPage() {
                 <TableBody>
                   {pagedBlood.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                         No matching inventory.
                       </TableCell>
                     </TableRow>
                   )}
                   {pagedBlood.map((item) => {
+                    const compMeta = COMPONENT_MAP[item.componentType || "PACKED_RED_CELLS"] || COMPONENT_MAP.PACKED_RED_CELLS;
                     const status =
                       item.units === 0
                         ? "Out of Stock"
@@ -578,6 +646,19 @@ export default function InventoryPage() {
                       <TableRow key={item._id}>
                         <TableCell className="font-medium">{item.hospitalId?.name || "Unknown Hospital"}</TableCell>
                         <TableCell className="text-center font-bold text-red-700">{item.bloodGroup}</TableCell>
+                        <TableCell className="text-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${compMeta.color}`}>
+                            {compMeta.shortLabel}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center text-xs">
+                          <span className="text-muted-foreground font-mono bg-muted/60 px-2 py-0.5 rounded">
+                            {item.storageTemperature || compMeta.temp}
+                          </span>
+                          {item.componentType === "PLATELET_CONCENTRATE" && (
+                            <div className="text-[10px] text-amber-700 font-medium mt-0.5">⚠️ 5-day shelf life</div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-center font-semibold">{item.units}</TableCell>
                         <TableCell className="text-center">
                           <Badge className={badgeClass}>
@@ -780,6 +861,27 @@ export default function InventoryPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <Label>Blood Component</Label>
+                <select
+                  value={bloodForm.componentType}
+                  onChange={(e) =>
+                    setBloodForm({ ...bloodForm, componentType: e.target.value as any })
+                  }
+                  className="w-full border border-input rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-muted disabled:text-muted-foreground"
+                  disabled={!!editingBlood}
+                  required
+                >
+                  {COMPONENT_TYPES.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label} ({c.temp})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Storage rule: {COMPONENT_MAP[bloodForm.componentType]?.temp} &bull; Shelf life: {COMPONENT_MAP[bloodForm.componentType]?.shelfLife}
+                </p>
               </div>
               <div>
                 <Label>Units</Label>

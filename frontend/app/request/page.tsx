@@ -25,6 +25,7 @@ export default function PublicRequestPage() {
     clinicalAcknowledged: false,
     resourceType: 'blood' as 'blood' | 'oxygen',
     bloodGroup: '',
+    componentType: 'PACKED_RED_CELLS' as 'WHOLE_BLOOD' | 'PACKED_RED_CELLS' | 'PLATELET_CONCENTRATE' | 'FRESH_FROZEN_PLASMA' | 'CRYOPRECIPITATE',
     units: 1,
     urgency: 'routine' as 'scheduled' | 'routine',
     scheduledTime: '',
@@ -44,6 +45,21 @@ export default function PublicRequestPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    // Strict Nigerian phone validation
+    const contactDigits = form.contactPhone.replace(/\D/g, '');
+    if (!form.contactPhone.trim() || contactDigits.length < 10 || contactDigits.length > 14) {
+      setError('Please enter a valid Nigerian phone number for contact (e.g. 08012345678 or +2348012345678).');
+      return;
+    }
+    if (form.doctorPhone.trim()) {
+      const docDigits = form.doctorPhone.replace(/\D/g, '');
+      if (docDigits.length < 10 || docDigits.length > 14) {
+        setError('Please enter a valid doctor phone number (e.g. 08012345678 or +2348012345678).');
+        return;
+      }
+    }
+
     if (form.resourceType === 'blood' && !form.bloodGroup) {
       setError('Please select a blood group.');
       return;
@@ -63,16 +79,22 @@ export default function PublicRequestPage() {
     setSubmitting(true);
     try {
       const payload: any = {
-        contactPhone: form.contactPhone,
+        contactPhone: form.contactPhone.trim(),
         resourceType: form.resourceType,
         units: form.units,
         urgency: form.urgency,
         doctorName: form.doctorName.trim(),
       };
-      if (form.patientName) payload.patientName = form.patientName;
-      if (form.doctorPhone) payload.doctorPhone = form.doctorPhone.trim();
-      if (form.email) payload.email = form.email;
-      if (form.resourceType === 'blood') payload.bloodGroup = form.bloodGroup;
+      if (form.patientName) payload.patientName = form.patientName.trim();
+      if (form.doctorPhone.trim()) payload.doctorPhone = form.doctorPhone.trim();
+      if (form.email) payload.email = form.email.trim();
+      if (form.resourceType === 'blood') {
+        payload.bloodGroup = form.bloodGroup;
+        payload.componentType = form.componentType;
+        if (form.componentType === 'FRESH_FROZEN_PLASMA' || form.componentType === 'CRYOPRECIPITATE') {
+          payload.requiresThawing = true;
+        }
+      }
       if (form.urgency === 'scheduled' && form.scheduledTime) payload.scheduledTime = form.scheduledTime;
       if (form.preferredHospitalId) payload.preferredHospitalId = form.preferredHospitalId;
       if (form.destinationFacility) payload.destinationFacility = form.destinationFacility;
@@ -108,6 +130,18 @@ export default function PublicRequestPage() {
             <h1 className="text-xl font-bold text-gray-800">Smart Blood Bank</h1>
             <p className="text-xs text-gray-400">Request blood or oxygen</p>
           </div>
+        </div>
+
+        {/* Section 53 NHA 2014 Legal Notice & Processing Fee Disclosure */}
+        <div className="bg-slate-100 border border-slate-300 rounded-xl p-3.5 mb-4 text-slate-800 text-xs shadow-xs space-y-1">
+          <div className="flex items-center gap-1.5 font-bold text-slate-900">
+            <span>⚖️</span>
+            <span>Legal Compliance: Blood Is Not For Sale (National Health Act 2014)</span>
+          </div>
+          <p className="text-slate-600 leading-relaxed text-[11px]">
+            Under Section 53 of the National Health Act 2014, commercial trading of human blood is a criminal offence.
+            Blood is donated voluntarily. In accordance with National Blood Policy, hospitals charge only approved clinical processing fees (₦8,000–₦15,000) for infection testing, grouping, crossmatching, sterile bagging, and cold-chain storage.
+          </p>
         </div>
 
         <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6 text-amber-950 shadow-xs">
@@ -188,9 +222,12 @@ export default function PublicRequestPage() {
                   <div>
                     <Label className="text-xs font-medium">Doctor&apos;s Phone / Folio (Optional)</Label>
                     <Input
+                      type="tel"
+                      inputMode="tel"
                       value={form.doctorPhone}
-                      onChange={(e) => set({ doctorPhone: e.target.value })}
+                      onChange={(e) => set({ doctorPhone: e.target.value.replace(/[^\d+]/g, '') })}
                       placeholder="e.g. 08012345678"
+                      maxLength={14}
                       className="mt-1 bg-white"
                     />
                   </div>
@@ -215,8 +252,19 @@ export default function PublicRequestPage() {
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
-                    <Label>Contact phone *</Label>
-                    <Input value={form.contactPhone} onChange={(e) => set({ contactPhone: e.target.value })} placeholder="08012345678" required />
+                    <div className="flex items-center justify-between">
+                      <Label>Contact phone *</Label>
+                      <span className="text-[11px] text-gray-400">080... or +234...</span>
+                    </div>
+                    <Input
+                      type="tel"
+                      inputMode="tel"
+                      value={form.contactPhone}
+                      onChange={(e) => set({ contactPhone: e.target.value.replace(/[^\d+]/g, '') })}
+                      placeholder="08012345678"
+                      maxLength={14}
+                      required
+                    />
                   </div>
                   <div>
                     <Label>Email (for updates)</Label>
@@ -251,6 +299,34 @@ export default function PublicRequestPage() {
                     </div>
                   )}
                 </div>
+
+                {form.resourceType === 'blood' && (
+                  <div>
+                    <Label>Blood component type *</Label>
+                    <select
+                      value={form.componentType}
+                      onChange={(e) => set({ componentType: e.target.value as any })}
+                      className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+                      required
+                    >
+                      <option value="PACKED_RED_CELLS">Packed Red Blood Cells (PRBC) — Standard for anaemia / acute blood loss</option>
+                      <option value="WHOLE_BLOOD">Whole Blood — Massive trauma haemorrhage / exchange transfusion</option>
+                      <option value="PLATELET_CONCENTRATE">Platelet Concentrate — Clotting support / thrombocytopenia</option>
+                      <option value="FRESH_FROZEN_PLASMA">Fresh Frozen Plasma (FFP) — Coagulation factor deficiency</option>
+                      <option value="CRYOPRECIPITATE">Cryoprecipitate — Fibrinogen deficiency / haemophilia</option>
+                    </select>
+                    {(form.componentType === 'FRESH_FROZEN_PLASMA' || form.componentType === 'CRYOPRECIPITATE') && (
+                      <p className="text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mt-2">
+                        ❄️ <strong>Laboratory Thawing Required:</strong> Stored frozen at −18°C or colder. Requires specialized hospital laboratory water-bath thawing (30–37°C) prior to bedside administration.
+                      </p>
+                    )}
+                    {form.componentType === 'PLATELET_CONCENTRATE' && (
+                      <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-2">
+                        ⚡ <strong>Critical 5-Day Shelf Life:</strong> Platelets require continuous 20–24°C agitation. The hospital blood bank verifies live stock and issue times before dispatch.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>

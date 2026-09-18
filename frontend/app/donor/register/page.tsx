@@ -24,6 +24,8 @@ export default function DonorRegister() {
     name: '', phone: '', email: '', password: '',
     bloodGroup: '', dateOfBirth: '', gender: '', weight: '',
     allergies: '', nin: '',
+    donationTypePreference: 'WHOLE_BLOOD',
+    nonRemunerationDeclared: true,
   });
 
   useEffect(() => {
@@ -43,6 +45,12 @@ export default function DonorRegister() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    const phoneDigits = form.phone.replace(/\D/g, '');
+    if (!form.phone.trim() || phoneDigits.length < 10 || phoneDigits.length > 14) {
+      setError('Please enter a valid Nigerian phone number (e.g. 08012345678 or +2348012345678).');
+      return;
+    }
     if (!form.bloodGroup) { setError('Please select your blood group.'); return; }
     if (!form.dateOfBirth) { setError('Please enter your date of birth.'); return; }
     const dob = new Date(form.dateOfBirth);
@@ -59,6 +67,11 @@ export default function DonorRegister() {
       setError('Please enter a realistic weight between 30 kg and 300 kg.');
       return;
     }
+    if (!form.nonRemunerationDeclared) {
+      setError('You must accept the voluntary non-remuneration declaration under Section 53 of the National Health Act 2014.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       await apiClient.post('/donors/register', {
@@ -72,6 +85,8 @@ export default function DonorRegister() {
         weight: form.weight ? Number(form.weight) : undefined,
         allergies: form.allergies ? form.allergies.trim() : undefined,
         nin: cleanNin,
+        donationTypePreference: form.donationTypePreference,
+        nonRemunerationDeclared: form.nonRemunerationDeclared,
         location: { type: 'Point', coordinates: coords || DEFAULT_COORDS },
       });
       // Auto sign-in so onboarding is one smooth flow.
@@ -109,8 +124,19 @@ export default function DonorRegister() {
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <Label>Phone *</Label>
-                  <Input type="tel" value={form.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="08012345678" required />
+                  <div className="flex items-center justify-between">
+                    <Label>Phone *</Label>
+                    <span className="text-[11px] text-gray-400">080... or +234...</span>
+                  </div>
+                  <Input
+                    type="tel"
+                    inputMode="tel"
+                    value={form.phone}
+                    onChange={(e) => set({ phone: e.target.value.replace(/[^\d+]/g, '') })}
+                    placeholder="08012345678"
+                    maxLength={14}
+                    required
+                  />
                 </div>
                 <div>
                   <Label>Email *</Label>
@@ -153,6 +179,21 @@ export default function DonorRegister() {
                 </div>
               </div>
               <div>
+                <Label>Donation Type Preference</Label>
+                <select
+                  value={form.donationTypePreference}
+                  onChange={(e) => set({ donationTypePreference: e.target.value })}
+                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+                >
+                  <option value="WHOLE_BLOOD">Whole Blood (Standard voluntary donation)</option>
+                  <option value="PLATELET_APHERESIS">Platelet Apheresis (Specialized cell-separator donation)</option>
+                  <option value="PLASMA_APHERESIS">Plasma Apheresis (Specialized plasma donation)</option>
+                </select>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Under NBSC guidelines, donors may donate whole blood or opt for apheresis platelet/plasma donation.
+                </p>
+              </div>
+              <div>
                 <div className="flex items-center justify-between">
                   <Label>National Identification Number (NIN) *</Label>
                   <span className="text-[11px] text-gray-400">{form.nin.replace(/\D/g, '').length} / 11 digits</span>
@@ -183,6 +224,25 @@ export default function DonorRegister() {
                   Clinical staff check this during pre-donation health screening.
                 </p>
               </div>
+
+              {/* Section 53 NHA 2014 Mandatory Declaration */}
+              <div className="rounded-xl border border-red-200 bg-red-50/60 p-3.5 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    id="nonRemun"
+                    checked={form.nonRemunerationDeclared}
+                    onChange={(e) => set({ nonRemunerationDeclared: e.target.checked })}
+                    className="mt-0.5 rounded border-red-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                    required
+                  />
+                  <label htmlFor="nonRemun" className="text-xs text-red-950 leading-relaxed cursor-pointer">
+                    <strong>Voluntary Non-Remuneration Declaration (Section 53, National Health Act 2014):</strong><br />
+                    I confirm that I am registering to donate blood voluntarily and without financial payment or remuneration. I understand that selling blood is illegal under Section 53 of the National Health Act 2014, and that commercial blood trading constitutes a criminal offence.
+                  </label>
+                </div>
+              </div>
+
               <p className="text-xs text-gray-400 flex items-center gap-1"><MapPin className="h-3 w-3" /> {locStatus}</p>
               <Button type="submit" className="w-full" disabled={submitting}>
                 {submitting ? 'Creating account…' : 'Register as donor'}

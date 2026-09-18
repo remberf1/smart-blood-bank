@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ShieldCheck, Lock, FileText, AlertTriangle, Hospital, HeartHandshake, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Lock, FileText, AlertTriangle, Hospital, HeartHandshake, ArrowLeft, Droplet, Clock, CheckCircle } from 'lucide-react';
 
 export const metadata = {
   title: 'Privacy, Clinical Safety & Data Protection | Smart Blood Bank',
@@ -151,11 +151,112 @@ export default function PrivacyPolicyPage() {
             </div>
           </section>
 
-          {/* Section 4: Cold-Chain & Transfer Custody */}
+          {/* Section 4: National Health Act 2014 (Section 53) - Criminalisation of Blood Sales */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-bold">
+                4
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">
+                National Health Act 2014 (Section 53): Criminalisation of Blood Trading &amp; Fee Transparency
+              </h2>
+            </div>
+            
+            <div className="rounded-2xl border border-amber-300 bg-amber-50/70 p-5 space-y-3 text-sm text-amber-950">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <h4 className="font-bold text-amber-950">
+                    Statutory Ban on Commercial Blood Sales
+                  </h4>
+                  <p className="leading-relaxed text-amber-900">
+                    Under <strong>Section 53 of the National Health Act 2014</strong>, the commercial sale, trading, or purchase of human blood, tissues, or organs is an explicit criminal offence punishable by statutory fines of up to ₦100,000, imprisonment for up to one year, or both. The National Blood Service Commission (NBSC) mandates that human blood is a national resource collected exclusively from voluntary, non-remunerated donors.
+                  </p>
+                  <p className="leading-relaxed text-amber-900">
+                    Smart Blood Bank does not quote, record, or facilitate any price for blood. All donors registered on this platform execute a mandatory voluntary non-remuneration declaration confirming their donation is altruistic.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-2xl p-5 bg-white space-y-3 text-sm shadow-2xs">
+              <h4 className="font-bold text-gray-900 flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                Statutory Clinical Processing Fee Disclosure
+              </h4>
+              <p className="text-gray-600 text-xs leading-relaxed">
+                Hospital blood banks incur clinical overhead to prepare donated blood for safe human transfusion. The National Blood Policy authorizes accredited healthcare institutions to charge a strictly cost-recovery clinical processing fee (approved standard: <strong>₦8,000 to ₦15,000 per unit</strong>). This fee never constitutes payment for blood, but covers non-negotiable biosafety procedures:
+              </p>
+              <ul className="grid sm:grid-cols-2 gap-2 text-xs text-gray-700 pt-1">
+                <li className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  <span>Mandatory 5-pathogen viral screening (HIV 1/2, HBV, HCV, Syphilis)</span>
+                </li>
+                <li className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  <span>Forward &amp; reverse ABO and Rh(D) serological grouping</span>
+                </li>
+                <li className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  <span>Crossmatching &amp; antibody screening for transfusion safety</span>
+                </li>
+                <li className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  <span>Calibrated cold-chain storage with auxiliary generator backup</span>
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          {/* Section 5: Component Therapy & Reverse Plasma Compatibility */}
           <section className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-gray-100 text-gray-800 flex items-center justify-center font-bold">
-                4
+                5
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">
+                WHO &amp; NBSC Blood Component Therapy &amp; Reverse Compatibility Standards
+              </h2>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              In modern clinical transfusion practice (World Health Organization &amp; NBSC guidelines), single whole blood units are separated into fractionated biological components. This optimizes clinical efficacy and allows one voluntary donor to save up to three lives.
+            </p>
+
+            <div className="grid md:grid-cols-3 gap-3 text-xs">
+              <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/50 space-y-2">
+                <div className="font-bold text-gray-900 flex items-center gap-1.5">
+                  <Droplet className="h-4 w-4 text-red-600" /> Packed Red Cells (PRBC)
+                </div>
+                <p className="text-gray-600">
+                  Stored at <strong>2°C to 6°C</strong> for up to 42 days. Follows classic ABO rules: Group O is the universal donor; Group AB is universal recipient.
+                </p>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl p-4 bg-amber-50/50 space-y-2">
+                <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-amber-600" /> Platelet Concentrate
+                </div>
+                <p className="text-amber-800">
+                  Stored at <strong>20°C to 24°C with continuous agitation</strong>. Critical <strong>5-day shelf life</strong> (with 1-day system alerts) to prevent bacterial proliferation.
+                </p>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl p-4 bg-blue-50/50 space-y-2">
+                <div className="font-bold text-blue-900 flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-blue-600" /> Fresh Frozen Plasma (FFP)
+                </div>
+                <p className="text-blue-800">
+                  Stored at <strong>−18°C or colder</strong> for up to 1 year. Follows <strong>Reverse ABO Compatibility</strong>: Group AB is universal plasma donor (zero anti-A/anti-B antibodies); Group O patients can receive plasma from any group. Requires clinical thawing (30–37°C) before infusion.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 6: Cold-Chain & Transfer Custody */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-gray-100 text-gray-800 flex items-center justify-center font-bold">
+                6
               </div>
               <h2 className="text-xl font-bold text-gray-900">
                 Cold-Chain Integrity &amp; Hospital-to-Hospital Delivery
@@ -166,11 +267,11 @@ export default function PrivacyPolicyPage() {
             </p>
           </section>
 
-          {/* Section 5: Data Subject Rights */}
+          {/* Section 7: Data Subject Rights */}
           <section className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-gray-100 text-gray-800 flex items-center justify-center font-bold">
-                5
+                7
               </div>
               <h2 className="text-xl font-bold text-gray-900">
                 Data Subject Rights &amp; Regulatory Inquiries

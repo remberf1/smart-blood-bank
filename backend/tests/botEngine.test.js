@@ -82,3 +82,29 @@ test('Scenario 0: Help & Clinical Safety Notice emphasizes anti-self-medication'
   assert.match(reply, /controlled, prescription-only biological therapies/i);
   assert.match(reply, /NBSC & MDCN regulations/i);
 });
+
+test('Scenario 9b: Raw blood group query from public user triggers Clinical Notice & Section 53 warning', async () => {
+  const phone = '+2348099990006';
+  const replyO = await handleIncomingMessage({ fromPhone: phone, text: 'O-' });
+  assert.match(replyO, /CLINICAL NOTICE/i);
+  assert.match(replyO, /National Health Act 2014, Sec 53/i);
+  assert.match(replyO, /Reply \*DOCTOR\* to verify/i);
+
+  const replyNeed = await handleIncomingMessage({ fromPhone: phone, text: 'I need O+ blood' });
+  assert.match(replyNeed, /CLINICAL NOTICE/i);
+  assert.match(replyNeed, /controlled human biological tissue/i);
+});
+
+test('Scenario 1: formatEmergencyHospitals displays emergency directions and NO blood inventory', () => {
+  const mockHospitals = [
+    { name: 'OSUTH', contactPhone: '08012345678', distance: '4.2', coordinates: [4.5418, 7.7827] },
+    { name: 'LUTH', contactPhone: '08012345000', distance: '12.5', coordinates: [3.3792, 6.5244] },
+  ];
+  const reply = formatEmergencyHospitals(mockHospitals, 7.78, 4.54);
+  assert.match(reply, /NEAREST EMERGENCY HOSPITALS/i);
+  assert.match(reply, /Emergency: 08012345678/i);
+  assert.match(reply, /Directions: https:\/\/www.google.com\/maps/i);
+  assert.match(reply, /Do NOT search for blood yourself/i);
+  assert.doesNotMatch(reply, /\d+ unit\(s\)/i);
+});
+

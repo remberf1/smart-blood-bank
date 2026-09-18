@@ -10,6 +10,8 @@ const { sendEmail, buildPasswordResetEmail } = require('../services/notification
 const { generateResetToken, hashToken } = require('../utils/passwordReset');
 const authDonor = require('../middleware/authDonor');
 const { formatNigerianPhone } = require('../utils/phone');
+const DonationAppointment = require('../models/DonationAppointment');
+const { logAudit } = require('../services/auditService');
 
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
@@ -135,7 +137,7 @@ router.get('/profile', authDonor, async (req, res) => {
 router.put('/profile', authDonor, async (req, res) => {
   try {
     const donor = req.donor; // full doc loaded by authDonor (password excluded)
-    const { name, phone, email, bloodGroup, sosOptIn, location, allergies } = req.body;
+    const { name, phone, email, bloodGroup, sosOptIn, location, allergies, nin } = req.body;
 
     const VALID_BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
     if (bloodGroup && VALID_BLOOD_GROUPS.includes(bloodGroup) && bloodGroup !== donor.bloodGroup) {
@@ -246,6 +248,40 @@ router.post('/change-password', authDonor, async (req, res) => {
     res.json({ message: 'Password changed successfully.' });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== NDPA 2023: RIGHT TO DELETION (RIGHT TO BE FORGOTTEN) ====================
+// Implements NDPA 2023 Section 34: Data Subject Right to Erasure
+router.delete('/me', authDonor, async (req, res) => {
+  try {
+    const donor = await Donor.findById(req.donor._id);
+    if (!donor) return res.status(404).json({ error: 'Donor profile not found.' });
+
+    // Cancel any active unfulfilled appointments
+    await DonationAppointment.updateMany(
+      { donorId: donor._id, status: { $in: ['pending', 'scheduled'] } },
+      { status: 'cancelled', notes: 'Cancelled due to donor right-to-erasure request under NDPA 2023.' }
+    );
+
+    const donorId = donor._id.toString();
+    await Donor.findByIdAndDelete(donor._id);
+
+    // Audit log deletion without preserving sensitive PII
+    logAudit({ userId: donorId, role: 'donor' }, 'donor.data_erasure_requested', {
+      entity: 'Donor',
+      entityId: donorId,
+      summary: `Donor profile and PII erased under NDPA 2023 Section 34 (Right to be Forgotten).`,
+      meta: { erasedAt: new Date().toISOString() },
+    });
+
+    res.json({
+      message: 'Your account and personal data have been completely erased in accordance with NDPA 2023 Section 34.',
+      status: 'erased',
+    });
+  } catch (err) {
+    console.error('Data erasure error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

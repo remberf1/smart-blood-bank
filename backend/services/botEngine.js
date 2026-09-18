@@ -8,7 +8,9 @@ const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = 
 const { triggerSOS, processDonorResponse } = require('./sosService');
 const { formatNigerianPhone } = require('../utils/phone');
 const { evaluateDonorEligibility } = require('../utils/eligibility');
-const { getCompatibleDonors, compatibilityIndex } = require('../utils/bloodCompatibility');
+const { getCompatibleDonors, compatibilityIndex, COMPONENT_RULES } = require('../utils/bloodCompatibility');
+const { logAudit } = require('./auditService');
+const { allocateBlood } = require('./allocationService');
 
 // User session storage with 30-minute TTL to prevent memory leaks
 const userSessions = new Map();
@@ -17,6 +19,14 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 const bloodGroupOptions = {
   '1': 'A+', '2': 'A-', '3': 'B+', '4': 'B-',
   '5': 'AB+', '6': 'AB-', '7': 'O+', '8': 'O-'
+};
+
+const componentOptions = {
+  '1': 'WHOLE_BLOOD',
+  '2': 'PACKED_RED_CELLS',
+  '3': 'PLATELET_CONCENTRATE',
+  '4': 'FRESH_FROZEN_PLASMA',
+  '5': 'CRYOPRECIPITATE',
 };
 
 const cityCoords = {
@@ -73,6 +83,8 @@ To find the nearest hospitals and emergency facilities, please share your locati
 📲 Tap *Send your current location*
 
 _💡 Or simply reply with your city name (e.g. "Ife", "Osogbo", "Lagos")._
+
+⚠️ _Blood transfusion requires clinical hospital assessment. Never self-administer blood._
 _Type MENU to return._`;
 }
 
@@ -89,7 +101,8 @@ the nearest hospital immediately.
 5️⃣ *DONATE BLOOD*
 0️⃣ *HELP & CLINICAL SAFETY NOTICE*
 
-⚠️ *Blood transfusion is a prescription-only clinical procedure. Only a licensed doctor can determine if blood is needed.*
+⚠️ *STRICT CLINICAL SAFETY NOTICE:*
+Blood and oxygen are prescription-only clinical procedures (National Health Act 2014, Sec 53). Only a licensed doctor can determine if blood is needed. Self-administration or private sale is illegal.
 
 _Reply with 1, 2, 3, 4, 5, or 0. Doctors may reply *DOCTOR* to authenticate._`;
 }
@@ -117,6 +130,9 @@ private residences. All transfusions require:
   1. A licensed doctor's assessment
   2. Laboratory cross-matching
   3. In-hospital administration
+
+⚠️ *LEGAL SAFEGUARD (National Health Act 2014, Sec 53):*
+Trading, buying, or selling blood is a criminal offense punishable by fine and imprisonment. Blood is a voluntary national resource, not a commercial commodity.
 
 Are you a doctor or hospital staff?
   Reply *DOCTOR* to verify and query stock.
@@ -230,17 +246,19 @@ function formatDoctorOxygen(oxygenData) {
   return message;
 }
 
-function formatDoctorBloodQuery(bloodGroup, rankedHospitals, lat, lon) {
+function formatDoctorBloodQuery(bloodGroup, rankedHospitals, lat, lon, componentType = 'PACKED_RED_CELLS') {
+  const rules = COMPONENT_RULES[componentType] || COMPONENT_RULES.PACKED_RED_CELLS;
   if (!rankedHospitals || rankedHospitals.length === 0) {
     const ref = `SOS-${Math.random().toString(16).substring(2, 7).toUpperCase()}`;
-    let sosMsg = `🩸 *${bloodGroup} — NO STOCK FOUND*\n\n`;
-    sosMsg += `No registered hospital within 50km currently has ${bloodGroup} blood available.\n\n`;
+    let sosMsg = `🩸 *${bloodGroup} ${rules.label.toUpperCase()} — NO STOCK FOUND*\n\n`;
+    sosMsg += `No registered hospital within 50km currently has ${bloodGroup} ${rules.label} available.\n\n`;
     sosMsg += `🚨 *EMERGENCY SOS BROADCAST INITIATED*\n\n`;
     sosMsg += `Reference: ${ref}\n\n`;
     sosMsg += `We have sent emergency alerts to:\n`;
     sosMsg += `  • Registered ${bloodGroup} donors within 15km\n`;
     sosMsg += `  • Neighboring hospital blood banks\n\n`;
-    sosMsg += `Status: 🟡 Awaiting Donor Response\n\n`;
+    sosMsg += `Status: 🟡 Awaiting Donor Response\n`;
+    sosMsg += `Storage Requirement: ${rules.storageTemp}\n\n`;
     sosMsg += `You will be notified as soon as a donor confirms availability. Track status: *TRACK ${ref}*\n\n`;
     sosMsg += `📞 For immediate coordination, contact:\n`;
     sosMsg += `   LUTH Blood Bank: 08012345000\n`;
@@ -248,27 +266,35 @@ function formatDoctorBloodQuery(bloodGroup, rankedHospitals, lat, lon) {
     return sosMsg;
   }
 
-  let message = `🩸 *${bloodGroup} STOCK — CLINICAL QUERY*\n\n`;
+  let message = `🩸 *${bloodGroup} ${rules.label.toUpperCase()} — CLINICAL STOCK QUERY*\n\n`;
   rankedHospitals.slice(0, 3).forEach((h, i) => {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
     message += `${medal} *${h.name}*\n`;
-    message += `   Stock: *${h.exactUnits} unit(s)* of *${bloodGroup}*\n`;
+    message += `   Stock: *${h.exactUnits} unit(s)* of *${rules.label} (${bloodGroup})*\n`;
     if (h.compatibleDetails && h.compatibleDetails.length > 0) {
       const compDesc = h.compatibleDetails.map((c) => `${c.units} ${c.group}`).join(', ');
       message += `   🔄 Compatible: ${compDesc}\n`;
     }
+    message += `   Storage: ${rules.storageTemp}\n`;
     message += `   Crossmatch: Available on-site\n`;
     message += `   📞 Blood Bank Direct: ${h.contactPhone || '08012345000'}\n`;
     if (h.distance != null) message += `   📍 ${h.distance}km from your location\n`;
     message += `   🕐 Last updated: Recently\n\n`;
   });
 
+  if (componentType === 'FRESH_FROZEN_PLASMA' || componentType === 'CRYOPRECIPITATE') {
+    message += `ℹ️ *Note: Plasma compatibility follows ABO reverse rules. AB plasma is the universal plasma donor.*\n\n`;
+  }
+  if (rules.requiresThawing) {
+    message += `❄️ *Note: Component requires controlled laboratory water-bath thawing (30–37°C) before administration.*\n\n`;
+  }
+
   message += `ℹ️ _To initiate requisition, reply *REQUISITION* or contact the blood bank directly._\n\n`;
   message += `_Reply 1-8 for another type, or MENU._`;
   return message;
 }
 
-function formatRequestCard(r) {
+function formatRequestCard(r, viewerPhone = null) {
   const rawStatus = (r.deliveryStatus || r.status || 'pending').toLowerCase();
   const statusEmoji = {
     pending: '⏳ PENDING (Awaiting Hospital Confirmation)',
@@ -285,6 +311,24 @@ function formatRequestCard(r) {
   const preferred = r.preferredHospitalId;
   const hospital = allocated || preferred;
 
+  // NDPA 2023 Privacy Check: verify if the querying phone belongs to patient contact or attending doctor
+  let isAuthorized = false;
+  if (viewerPhone) {
+    const vDigits = String(viewerPhone).replace(/\D/g, '').slice(-10);
+    const cDigits = String(r.contactPhone || '').replace(/\D/g, '').slice(-10);
+    const dDigits = String(r.doctorPhone || '').replace(/\D/g, '').slice(-10);
+    if (vDigits && (vDigits === cDigits || vDigits === dDigits)) {
+      isAuthorized = true;
+    }
+  }
+
+  // Mask patient name if viewer phone does not match registered contact
+  let displayName = r.patientName || 'Patient';
+  if (!isAuthorized && displayName && displayName.length > 2) {
+    const parts = displayName.split(/\s+/);
+    displayName = parts.map(p => p.length <= 2 ? p : p[0] + '*'.repeat(Math.max(p.length - 2, 2)) + p.slice(-1)).join(' ');
+  }
+
   const quantity = r.units ?? r.unitsRequested ?? r.oxygenCylindersRequested ?? 1;
   const resourceDesc = r.resourceType === 'blood'
     ? `${quantity} unit(s) of ${r.bloodGroup || 'Blood'}`
@@ -292,7 +336,7 @@ function formatRequestCard(r) {
 
   let card = `📋 *REQUEST #${ref}*\n`;
   card += `📌 Status: *${statusEmoji}*\n`;
-  card += `🩺 Patient: ${r.patientName || 'Patient'}\n`;
+  card += `🩺 Patient: ${displayName}\n`;
   card += `🩸 Resource: ${resourceDesc}\n`;
 
   if (r.doctorName) {
@@ -300,7 +344,9 @@ function formatRequestCard(r) {
   }
   if (r.destinationFacility) {
     card += `🏥 Hospital: ${r.destinationFacility}`;
-    if (r.ward) card += ` (Ward: ${r.ward}${r.bedNumber ? `, Bed: ${r.bedNumber}` : ''})`;
+    if (isAuthorized && r.ward) {
+      card += ` (Ward: ${r.ward}${r.bedNumber ? `, Bed: ${r.bedNumber}` : ''})`;
+    }
     card += `\n`;
   } else if (hospital && hospital.name) {
     card += `🏥 Hospital: ${hospital.name}\n`;
@@ -310,7 +356,11 @@ function formatRequestCard(r) {
     card += `📞 Blood Bank Phone: ${hospital.contactPhone}\n`;
   }
 
-  card += `\nℹ️ _The hospital's clinical team is coordinating the blood supply. No action needed from you._\n`;
+  if (!isAuthorized) {
+    card += `\n🔒 _Patient PII masked under NDPA 2023. Track from the patient or doctor's registered phone for full clinical details._\n`;
+  } else {
+    card += `\nℹ️ _The hospital's clinical team is coordinating the blood supply. No action needed from you._\n`;
+  }
   return card;
 }
 
@@ -332,7 +382,7 @@ async function handleTrackingLookup(query, userPhone, session) {
         if (recent.length > 0) {
           session.step = null;
           let reply = `🔍 *TRACKING YOUR REQUESTS*\n\nFound ${recent.length} recent request(s) linked to your number:\n\n`;
-          reply += recent.map(formatRequestCard).join('\n---\n\n');
+          reply += recent.map(r => formatRequestCard(r, userPhone)).join('\n---\n\n');
           reply += `\n_To check a different request, reply with its 6-character Reference ID (e.g. SBB-4A7F2)._`;
           return reply;
         }
@@ -391,7 +441,7 @@ async function handleTrackingLookup(query, userPhone, session) {
 
     session.step = null;
     let reply = `✅ *REQUISITION FOUND*\n\n`;
-    reply += requests.map(formatRequestCard).join('\n---\n\n');
+    reply += requests.map(r => formatRequestCard(r, userPhone)).join('\n---\n\n');
     reply += `\n_Type MENU to return to main menu._`;
     return reply;
   } catch (err) {
@@ -401,13 +451,17 @@ async function handleTrackingLookup(query, userPhone, session) {
   }
 }
 
-async function findRankedHospitals(bloodGroup, lat, lon) {
-  const compatibleGroups = bloodGroup ? getCompatibleDonors(bloodGroup) : [];
+async function findRankedHospitals(bloodGroup, lat, lon, componentType = 'PACKED_RED_CELLS') {
+  const cType = componentType || 'PACKED_RED_CELLS';
+  const compatibleGroups = bloodGroup ? getCompatibleDonors(bloodGroup, cType) : [];
   const searchGroups = compatibleGroups.length ? compatibleGroups : (bloodGroup ? [bloodGroup] : []);
 
   const matchFilter = { resourceType: 'blood', units: { $gt: 0 } };
   if (searchGroups.length > 0) {
     matchFilter.bloodGroup = { $in: searchGroups };
+  }
+  if (componentType) {
+    matchFilter.componentType = componentType;
   }
 
   const hospitalsWithStock = await Inventory.aggregate([
@@ -453,7 +507,7 @@ async function findRankedHospitals(bloodGroup, lat, lon) {
     const isExact = item.bloodGroup === bloodGroup;
     const recencyScore = getRecencyScore(item.lastUpdatedAt);
     const stockScore = getStockScore(item.units, maxUnits);
-    const idx = compatibilityIndex(bloodGroup, item.bloodGroup);
+    const idx = compatibilityIndex(bloodGroup, item.bloodGroup, cType);
     const rank = idx === -1 ? 99 : idx;
 
     let wps;
@@ -507,8 +561,11 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
     return getMainMenu();
   }
 
-  // 1d. Scenario 9: Random Person Tries to Query Blood ("I need blood", "where can I buy blood", etc.)
-  if (/^(i need blood|need blood|want blood|find blood|search blood|buy blood|where.*blood|get blood|blood availability)$/i.test(incomingMsg)) {
+  // 1d. Scenario 9: Random Person Tries to Query Blood ("I need blood", "where can I buy blood", "O+", etc.)
+  if (!session.isDoctor && !session.step && (
+    /^(i need blood|need blood|want blood|find blood|search blood|buy blood|where.*blood|get blood|blood availability|blood)$/i.test(incomingMsg) ||
+    /^(i need|need|looking for|where can i find|do you have)?\s*(o\+|o-|a\+|a-|b\+|b-|ab\+|ab-)\s*(blood)?$/i.test(incomingMsg)
+  )) {
     session.step = null;
     return getClinicalNotice();
   }
@@ -519,33 +576,73 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
       session.step = 'in_doctor_menu';
       return getDoctorMenu(session);
     }
+    const now = Date.now();
+    if (session.pinLockedUntil && now < session.pinLockedUntil) {
+      const waitMin = Math.ceil((session.pinLockedUntil - now) / 60000);
+      return `🛑 *ACCOUNT TEMPORARILY LOCKED*\n\nToo many failed verification attempts. For clinical security under NDPA regulations, doctor authentication is locked for ${waitMin} more minute(s).\n\nIf you need emergency care, reply *1* or type *MENU*.`;
+    }
     session.step = 'awaiting_doctor_pin';
     return `🔐 *DOCTOR VERIFICATION*\n\nPlease enter your Doctor Access PIN or Hospital Code:\n_(e.g., DOC-2026 or HOSP-OSUTH)_`;
   }
 
   // 3. Doctor PIN Verification Step
   if (session.step === 'awaiting_doctor_pin') {
+    const now = Date.now();
+    if (session.pinLockedUntil && now < session.pinLockedUntil) {
+      const waitMin = Math.ceil((session.pinLockedUntil - now) / 60000);
+      session.step = null;
+      return `🛑 *ACCOUNT TEMPORARILY LOCKED*\n\nToo many failed verification attempts. Please wait ${waitMin} more minute(s), or reply *MENU*.`;
+    }
+
     const cleanPin = incomingMsg.toUpperCase().replace(/\s+/g, '');
     const validCodes = ['DOC-2026', 'DOC2026', 'HOSP-OSUTH', 'HOSP-LUTH', 'HOSP-BUTH', 'HOSP-FMCB', 'MDCN', '1234', '0000'];
     const isDocCode = validCodes.includes(cleanPin) || cleanPin.startsWith('DOC') || cleanPin.startsWith('HOSP');
 
     if (isDocCode) {
       session.isDoctor = true;
+      session.failedPinAttempts = 0;
+      session.pinLockedUntil = null;
       session.doctorName = cleanPin.includes('OSUTH') ? 'Dr. O. Babatunde' : 'Dr. A. Adeleke';
       session.doctorHospital = cleanPin.includes('OSUTH') ? 'OSUTH' : 'LUTH';
       session.step = 'in_doctor_menu';
+
+      // Log successful authentication event to immutable audit trail
+      logAudit({ role: 'doctor', phone: userPhone }, 'doctor.whatsapp_auth_success', {
+        entity: 'DoctorSession',
+        entityId: userPhone,
+        summary: `Doctor authenticated on WhatsApp via code ${cleanPin} (${session.doctorName})`,
+        meta: { phone: userPhone, code: cleanPin },
+      });
+
       return getDoctorMenu(session);
     }
 
+    session.failedPinAttempts = (session.failedPinAttempts || 0) + 1;
+    const remaining = 3 - session.failedPinAttempts;
+
+    // Log security failure event to immutable audit trail
+    logAudit({ role: 'anonymous', phone: userPhone }, 'doctor.whatsapp_auth_failed', {
+      entity: 'DoctorSession',
+      entityId: userPhone,
+      summary: `Failed doctor PIN attempt #${session.failedPinAttempts} on WhatsApp`,
+      meta: { phone: userPhone, attemptedCode: cleanPin },
+    });
+
+    if (session.failedPinAttempts >= 3) {
+      session.pinLockedUntil = now + (15 * 60 * 1000); // 15-minute lock
+      session.step = null;
+      return `🛑 *MAXIMUM ATTEMPTS EXCEEDED*\n\n3 incorrect PIN attempts recorded. Access is locked for 15 minutes to prevent brute-force attacks.\n\nSecurity event has been logged to the immutable audit trail.\n\nReply *MENU* to return.`;
+    }
+
     session.step = null;
-    return `❌ *VERIFICATION FAILED*\n\nThe PIN or Hospital Code you entered is not valid.\n\nIf you are a patient or family member, please reply *2* for Doctor-Authorized Blood Search.\n\nReply *MENU* to start over.`;
+    return `❌ *VERIFICATION FAILED*\n\nThe PIN or Hospital Code you entered is not valid. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining).\n\nIf you are a patient or family member, please reply *2* for Doctor-Authorized Blood Search.\n\nReply *MENU* to start over.`;
   }
 
   // 4. In-Doctor Menu Commands
   if (session.step === 'in_doctor_menu') {
     if (incomingMsg === '1' || /^blood$/i.test(incomingMsg)) {
-      session.step = 'doctor_awaiting_blood_group';
-      return `🩸 *CLINICAL BLOOD QUERY*\n\nSelect blood type:\n1️⃣ A+  2️⃣ A-\n3️⃣ B+  4️⃣ B-\n5️⃣ AB+ 6️⃣ AB-\n7️⃣ O+  8️⃣ O-\n\n_Reply 1-8 or e.g. "O-"_`;
+      session.step = 'doctor_awaiting_component';
+      return `🩸 *CLINICAL BLOOD QUERY*\n\nWhat component do you need?\n1️⃣ *WHOLE BLOOD*\n2️⃣ *PACKED RED CELLS (PRBC)*\n3️⃣ *PLATELET CONCENTRATE*\n4️⃣ *FRESH FROZEN PLASMA (FFP)*\n5️⃣ *CRYOPRECIPITATE*\n\n_Reply with a number (1-5)_`;
     }
     if (incomingMsg === '2' || /^oxygen$/i.test(incomingMsg)) {
       const oxygenData = await Inventory.aggregate([
@@ -578,6 +675,25 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
     }
   }
 
+  // 4a. Doctor Component Selection
+  if (session.step === 'doctor_awaiting_component') {
+    let componentType = componentOptions[incomingMsg];
+    if (!componentType) {
+      if (/whole/i.test(incomingMsg)) componentType = 'WHOLE_BLOOD';
+      else if (/prbc|packed|red/i.test(incomingMsg)) componentType = 'PACKED_RED_CELLS';
+      else if (/platelet/i.test(incomingMsg)) componentType = 'PLATELET_CONCENTRATE';
+      else if (/ffp|plasma/i.test(incomingMsg)) componentType = 'FRESH_FROZEN_PLASMA';
+      else if (/cryo/i.test(incomingMsg)) componentType = 'CRYOPRECIPITATE';
+    }
+    if (componentType) {
+      session.doctorComponent = componentType;
+      session.step = 'doctor_awaiting_blood_group';
+      const rules = COMPONENT_RULES[componentType] || COMPONENT_RULES.PACKED_RED_CELLS;
+      return `🩸 *${rules.label.toUpperCase()} — SELECT BLOOD TYPE*\n\n1️⃣ A+  2️⃣ A-\n3️⃣ B+  4️⃣ B-\n5️⃣ AB+ 6️⃣ AB-\n7️⃣ O+  8️⃣ O-\n\n_Reply 1-8 or e.g. "A+"_`;
+    }
+    return `❌ Invalid selection. Reply 1-5 for component type or MENU.`;
+  }
+
   // 4b. Doctor Blood Group Selection
   if (session.step === 'doctor_awaiting_blood_group') {
     let bloodGroup = null;
@@ -588,9 +704,10 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
       if (matched) bloodGroup = matched[0];
     }
     if (bloodGroup) {
-      const ranked = await findRankedHospitals(bloodGroup, session.lat, session.lon);
+      const cType = session.doctorComponent || 'PACKED_RED_CELLS';
+      const ranked = await findRankedHospitals(bloodGroup, session.lat, session.lon, cType);
       session.step = 'in_doctor_menu';
-      return formatDoctorBloodQuery(bloodGroup, ranked, session.lat, session.lon);
+      return formatDoctorBloodQuery(bloodGroup, ranked, session.lat, session.lon, cType);
     }
     return `❌ Invalid blood group. Reply 1-8 (e.g. 7 for O+) or MENU.`;
   }
@@ -652,19 +769,13 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
 
     if (session.step === 'awaiting_location_for_emergency_hospital') {
       session.step = null;
-      const allHospitals = await Hospital.find();
-      const mapped = allHospitals.map(h => {
-        let dist = null;
-        if (h.location?.coordinates?.length >= 2) {
-          dist = haversineDistance(latitude, longitude, h.location.coordinates[1], h.location.coordinates[0]);
-        }
-        return {
-          name: h.name,
-          contactPhone: h.contactPhone,
-          coordinates: h.location?.coordinates,
-          distance: dist != null ? dist.toFixed(1) : null,
-        };
-      }).sort((a, b) => (parseFloat(a.distance) || 999) - (parseFloat(b.distance) || 999));
+      const nearest = await Hospital.findNearest(longitude, latitude, 3);
+      const mapped = nearest.map(h => ({
+        name: h.name,
+        contactPhone: h.contactPhone,
+        coordinates: h.location?.coordinates,
+        distance: h.distanceKm != null ? h.distanceKm.toFixed(1) : null,
+      }));
       return formatEmergencyHospitals(mapped, latitude, longitude);
     }
 
@@ -680,20 +791,13 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
       session.lon = match.lon;
       session.hasLocation = true;
       session.step = null;
-
-      const allHospitals = await Hospital.find();
-      const mapped = allHospitals.map(h => {
-        let dist = null;
-        if (h.location?.coordinates?.length >= 2) {
-          dist = haversineDistance(match.lat, match.lon, h.location.coordinates[1], h.location.coordinates[0]);
-        }
-        return {
-          name: h.name,
-          contactPhone: h.contactPhone,
-          coordinates: h.location?.coordinates,
-          distance: dist != null ? dist.toFixed(1) : null,
-        };
-      }).sort((a, b) => (parseFloat(a.distance) || 999) - (parseFloat(b.distance) || 999));
+      const nearest = await Hospital.findNearest(match.lon, match.lat, 3);
+      const mapped = nearest.map(h => ({
+        name: h.name,
+        contactPhone: h.contactPhone,
+        coordinates: h.location?.coordinates,
+        distance: h.distanceKm != null ? h.distanceKm.toFixed(1) : null,
+      }));
       return formatEmergencyHospitals(mapped, match.lat, match.lon);
     }
     return `⚠️ *Location Needed*\n\nPlease reply with your city name (e.g., "Ife", "Osogbo", "Lagos") or share your location pin (📎 → Location).\n\n_Type MENU to return to main menu._`;
@@ -733,7 +837,7 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
     const ref = `SBB-${Math.random().toString(16).substring(2, 7).toUpperCase()}`;
 
     try {
-      await new PatientRequest({
+      const newReq = await new PatientRequest({
         patientName,
         contactPhone: userPhone,
         resourceType: 'blood',
@@ -746,6 +850,16 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
         referenceId: ref,
         deliveryStatus: 'pending',
       }).save();
+
+      // Trigger automatic clinical matching & hospital allocation pipeline
+      allocateBlood().catch(err => console.error('Immediate allocation error:', err.message));
+
+      logAudit({ role: 'family', phone: userPhone }, 'patient_request.created_via_whatsapp_bridge', {
+        entity: 'PatientRequest',
+        entityId: newReq._id.toString(),
+        summary: `Doctor-authorized clinical search for ${patientName} (${bloodGroup}) at ${hospitalName}`,
+        meta: { referenceId: ref, doctorName: docName, doctorPhone: docPhone },
+      });
     } catch (err) {
       console.error('Failed to persist clinical search:', err.message);
     }
@@ -864,19 +978,13 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
       session.step = 'awaiting_location_for_emergency_hospital';
       return getLocationPrompt();
     }
-    const allHospitals = await Hospital.find();
-    const mapped = allHospitals.map(h => {
-      let dist = null;
-      if (h.location?.coordinates?.length >= 2) {
-        dist = haversineDistance(session.lat, session.lon, h.location.coordinates[1], h.location.coordinates[0]);
-      }
-      return {
-        name: h.name,
-        contactPhone: h.contactPhone,
-        coordinates: h.location?.coordinates,
-        distance: dist != null ? dist.toFixed(1) : null,
-      };
-    }).sort((a, b) => (parseFloat(a.distance) || 999) - (parseFloat(b.distance) || 999));
+    const nearest = await Hospital.findNearest(session.lon, session.lat, 3);
+    const mapped = nearest.map(h => ({
+      name: h.name,
+      contactPhone: h.contactPhone,
+      coordinates: h.location?.coordinates,
+      distance: h.distanceKm != null ? h.distanceKm.toFixed(1) : null,
+    }));
     return formatEmergencyHospitals(mapped, session.lat, session.lon);
   }
 

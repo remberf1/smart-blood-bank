@@ -459,6 +459,48 @@ async function sendDueAppointmentReminders(withinHours = 24) {
   return sent;
 }
 
+function buildAppointmentScheduledMessage(appointment, hospitalName) {
+  const dateStr = appointment.assignedDate
+    ? new Date(appointment.assignedDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+    : new Date(appointment.appointmentDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  const timeStr = appointment.assignedTime || 'During clinic hours';
+  const where = hospitalName ? ` at ${hospitalName}` : '';
+  return `🩸 Smart Blood Bank\n\nGood news! Your blood donation appointment${where} has been confirmed.\n📅 Date: ${dateStr}\n⏰ Time: ${timeStr}\n\nPlease arrive on time and stay well-hydrated. Thank you for giving the gift of life! ❤️`;
+}
+
+function buildAppointmentScheduledEmail(appointment, hospitalName) {
+  const dateStr = appointment.assignedDate
+    ? new Date(appointment.assignedDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+    : new Date(appointment.appointmentDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  const timeStr = appointment.assignedTime || 'During clinic hours';
+  const where = hospitalName ? ` at ${hospitalName}` : '';
+  const text = plain(buildAppointmentScheduledMessage(appointment, hospitalName));
+  const html = renderEmail({
+    emoji: '🩸',
+    accent: '#16a34a',
+    heading: 'Donation Appointment Confirmed!',
+    paragraphs: [
+      `Your voluntary blood donation appointment${where} is confirmed for ${dateStr} at ${timeStr}.`,
+      'The clinical phlebotomy team has prepared a slot for you. Please remember to drink plenty of fluids and eat a light meal prior to your donation.',
+      appointment.notes ? `Hospital Note: ${appointment.notes}` : '',
+    ].filter(Boolean),
+    cta: { label: 'View in Donor Dashboard', url: `${APP_URL}/donor/dashboard` },
+  });
+  return { subject: `Confirmed: Blood Donation Appointment${where} on ${dateStr}`, text, html };
+}
+
+async function notifyAppointmentScheduled(appointment, hospitalName) {
+  if (!appointment || !appointment.donorId) return { sent: false, reason: 'no-target' };
+  const donor = appointment.donorId;
+  const tasks = [];
+  if (donor.phone) tasks.push(sendWhatsApp(donor.phone, buildAppointmentScheduledMessage(appointment, hospitalName)));
+  if (donor.email) {
+    const e = buildAppointmentScheduledEmail(appointment, hospitalName);
+    tasks.push(sendEmail(donor.email, e.subject, e.text, e.html));
+  }
+  return Promise.all(tasks);
+}
+
 module.exports = {
   ENABLED,
   EMAIL_ENABLED,
@@ -467,13 +509,16 @@ module.exports = {
   notifyRequestStatus,
   notifyDonorEligible,
   notifyNewUser,
+  notifyAppointmentScheduled,
   sendDueAppointmentReminders,
   buildRequestStatusMessage,
   buildEligibleMessage,
   buildAppointmentReminder,
+  buildAppointmentScheduledMessage,
   buildRequestStatusEmail,
   buildEligibleEmail,
   buildAppointmentReminderEmail,
+  buildAppointmentScheduledEmail,
   buildWelcomeEmail,
   buildPasswordResetEmail,
   buildSosAlertEmail,

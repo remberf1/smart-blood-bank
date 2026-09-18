@@ -33,6 +33,9 @@ interface Appointment {
   _id: string;
   hospitalId: Hospital;
   appointmentDate: string;
+  assignedDate?: string;
+  assignedTime?: string;
+  timeSlot?: string;
   preferredDay?: string;
   preferredWindow?: string;
   status: string;
@@ -216,11 +219,11 @@ export default function DonorDashboard() {
     try {
       await apiClient.post('/donor/appointments', {
         hospitalId: formData.hospitalId,
-        appointmentDate: formData.appointmentDate,
+        appointmentDate: formData.appointmentDate ? formData.appointmentDate : undefined,
         preferredWindow: formData.preferredWindow,
         notes: formData.notes,
       });
-      toast.success('Donation day offer submitted — the hospital will confirm it shortly.');
+      toast.success('Donation offer submitted! The hospital blood bank will assign your date and time.');
       setFormData({ hospitalId: '', appointmentDate: '', preferredWindow: 'morning', notes: '' });
       await refreshAppointments();
     } catch (err: any) {
@@ -374,24 +377,24 @@ export default function DonorDashboard() {
           </CardContent>
         </Card>
 
-        {/* Offer to donate blood (No fixed minute setting, offering a preferred day) */}
+        {/* Offer to donate blood (Select hospital, hospital admin assigns time) */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CalendarPlus className="h-5 w-5 text-red-500" /> Offer to donate blood
             </CardTitle>
             <p className="text-xs text-gray-500 mt-1">
-              Choose a day you would like to visit the hospital blood bank. The clinical phlebotomy team will receive your offer and prepare for your arrival.
+              Select the hospital blood bank you wish to donate at. Hospital staff will check clinical capacity and assign your confirmed appointment date and time.
             </p>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSchedule} className="space-y-4">
               <div>
-                <Label>Hospital Blood Bank</Label>
+                <Label>Hospital Blood Bank *</Label>
                 <select
                   value={formData.hospitalId}
                   onChange={(e) => setFormData({ ...formData, hospitalId: e.target.value })}
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
                   required
                 >
                   <option value="">Select a hospital</option>
@@ -400,22 +403,25 @@ export default function DonorDashboard() {
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <Label>Preferred donation day *</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Preferred day (Optional)</Label>
+                    <span className="text-[11px] text-gray-400">Optional</span>
+                  </div>
                   <Input
                     type="date"
                     min={new Date().toISOString().split('T')[0]}
                     value={formData.appointmentDate}
                     onChange={(e) => setFormData({ ...formData, appointmentDate: e.target.value })}
-                    required
+                    className="mt-1"
                   />
-                  <p className="text-[11px] text-gray-400 mt-0.5">Under NBSC guidelines, donors offer an available day.</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Leave blank for hospital to assign earliest available slot.</p>
                 </div>
                 <div>
                   <Label>Preferred clinic window</Label>
                   <select
                     value={formData.preferredWindow}
                     onChange={(e) => setFormData({ ...formData, preferredWindow: e.target.value })}
-                    className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
                   >
                     <option value="morning">Morning Clinic (8:00 AM – 12:00 PM)</option>
                     <option value="afternoon">Afternoon Clinic (12:00 PM – 4:00 PM)</option>
@@ -425,7 +431,7 @@ export default function DonorDashboard() {
               </div>
               <div>
                 <Label>Notes (optional)</Label>
-                <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} placeholder="e.g. First-time donor, coming during lunch break, etc." />
+                <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} placeholder="e.g. First-time donor, coming during lunch break, etc." className="mt-1" />
               </div>
               <Button type="submit" disabled={booking}>{booking ? 'Submitting offer…' : 'Submit Donation Offer'}</Button>
             </form>
@@ -441,22 +447,35 @@ export default function DonorDashboard() {
           </CardHeader>
           <CardContent>
             {upcoming.length === 0 ? (
-              <p className="text-sm text-gray-400">No upcoming donations — offer a day above.</p>
+              <p className="text-sm text-gray-400">No upcoming donations — offer to donate above.</p>
             ) : (
               <ul className="divide-y">
                 {upcoming.map((a) => (
                   <li key={a._id} className="py-3 flex items-start justify-between gap-3">
-                    <div>
+                    <div className="space-y-1">
                       <p className="font-medium text-gray-800 flex items-center gap-1">
                         <MapPin className="h-4 w-4 text-gray-400" /> {a.hospitalId?.name}
                       </p>
-                      <p className="text-sm font-semibold text-gray-800 mt-0.5">
-                        {a.preferredDay || new Date(a.appointmentDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900">
+                          {a.assignedDate
+                            ? new Date(a.assignedDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+                            : a.preferredDay || (a.appointmentDate ? new Date(a.appointmentDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : 'Earliest available')}
+                        </span>
+                        {a.assignedTime ? (
+                          <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-xs font-bold">
+                            ⏰ {a.assignedTime}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-medium">
+                            ⏳ Awaiting time assignment
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-blue-600 font-medium">
                         {a.preferredWindow === 'afternoon' ? 'Afternoon Clinic (12:00 PM – 4:00 PM)' : a.preferredWindow === 'flexible' ? 'Flexible (Clinic hours)' : 'Morning Clinic (8:00 AM – 12:00 PM)'}
                       </p>
-                      {a.notes && <p className="text-xs text-gray-400 mt-0.5">Note: {a.notes}</p>}
+                      {a.notes && <p className="text-xs text-gray-500">Note: {a.notes}</p>}
                       {(() => {
                         const coords = (a.hospitalId as any)?.location?.coordinates;
                         const mapsUrl = coords && coords.length >= 2
@@ -480,7 +499,7 @@ export default function DonorDashboard() {
                         onClick={() => setCancelingAppt({
                           id: a._id,
                           hospitalName: a.hospitalId?.name,
-                          date: new Date(a.appointmentDate).toLocaleString(),
+                          date: a.assignedTime ? `${new Date(a.appointmentDate).toLocaleDateString()} at ${a.assignedTime}` : new Date(a.appointmentDate).toLocaleString(),
                         })}
                         className="text-red-600 text-xs hover:underline font-medium cursor-pointer"
                       >
@@ -571,7 +590,7 @@ export default function DonorDashboard() {
               </div>
               <div>
                 <Label>Phone</Label>
-                <Input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="08012345678" />
+                <Input type='tel' value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="08012345678" />
               </div>
             </div>
             <div>

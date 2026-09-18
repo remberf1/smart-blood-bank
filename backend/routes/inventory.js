@@ -12,7 +12,7 @@ const { allocateBlood, allocateOxygen } = require('../services/allocationService
 // POST - Add inventory (admin/superadmin only; staff adjust stock via donations & transfers)
 router.post('/', auth, isAdmin, async (req, res) => {
   try {
-    const { hospitalId, resourceType, bloodGroup, units, oxygenCylinderCount, oxygenFillStatus } = req.body;
+    const { hospitalId, resourceType, bloodGroup, componentType, units, oxygenCylinderCount, oxygenFillStatus } = req.body;
 
     if (!canAccessHospital(req.user, hospitalId)) {
       return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
@@ -22,9 +22,10 @@ router.post('/', auth, isAdmin, async (req, res) => {
     // expiry and refreshes the Inventory cache.
     if (resourceType === 'blood') {
       if (!bloodGroup) return res.status(400).json({ error: 'bloodGroup is required for blood' });
-      await addBloodUnits({ hospitalId, bloodGroup, units: units || 0, source: 'manual' });
+      const cType = componentType || 'PACKED_RED_CELLS';
+      await addBloodUnits({ hospitalId, bloodGroup, componentType: cType, units: units || 0, source: 'manual' });
       allocateBlood().catch(console.error);
-      const inventory = await Inventory.findOne({ hospitalId, resourceType: 'blood', bloodGroup });
+      const inventory = await Inventory.findOne({ hospitalId, resourceType: 'blood', bloodGroup, componentType: cType });
       return res.status(201).json(inventory);
     }
 
@@ -69,18 +70,24 @@ router.get('/blood', async (req, res) => {
 router.get('/blood/:bloodGroup', async (req, res) => {
   try {
     const requested = req.params.bloodGroup;
+    const componentType = req.query.componentType;
     const exactOnly = req.query.exact === 'true';
-    const groups = exactOnly ? [requested] : getCompatibleDonors(requested);
+    const groups = exactOnly ? [requested] : getCompatibleDonors(requested, componentType || 'PACKED_RED_CELLS');
 
     // Unknown/invalid group: fall back to an exact lookup so we never 500.
     const search = groups.length ? groups : [requested];
 
-    const inventory = await Inventory.find({
+    const filter = {
       resourceType: 'blood',
       bloodGroup: { $in: search },
       units: { $gt: 0 },
-    })
-      .populate('hospitalId', 'name address location contactPhone')
+    };
+    if (componentType) {
+      filter.componentType = componentType;
+    }
+
+    const inventory = await Inventory.find(filter)
+      .populate('hospitalId', 'name address location contactPhone processingFeeDisclosure')
       .lean();
 
     const annotated = inventory
@@ -89,7 +96,7 @@ router.get('/blood/:bloodGroup', async (req, res) => {
         ...row,
         requestedGroup: requested,
         matchType: row.bloodGroup === requested ? 'exact' : 'compatible',
-        compatibilityRank: compatibilityIndex(requested, row.bloodGroup),
+        compatibilityRank: compatibilityIndex(requested, row.bloodGroup, componentType || 'PACKED_RED_CELLS'),
       }))
       // exact first, then by compatibility preference, then more units first
       .sort(
@@ -141,14 +148,15 @@ router.put('/blood/:inventoryId', auth, isAdmin, async (req, res) => {
 
     // Reconcile the requested count against dated batches: add a manual batch
     // for an increase, discard oldest stock (FEFO) for a decrease.
+    const cType = existing.componentType || 'PACKED_RED_CELLS';
     const delta = target - (existing.units || 0);
     if (delta > 0) {
-      await addBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, units: delta, source: 'manual' });
+      await addBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, componentType: cType, units: delta, source: 'manual' });
       allocateBlood().catch(console.error);
     } else if (delta < 0) {
-      await removeBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, units: -delta });
+      await removeBloodUnits({ hospitalId: existing.hospitalId, bloodGroup: existing.bloodGroup, componentType: cType, units: -delta });
     } else {
-      await refreshBloodInventory(existing.hospitalId, existing.bloodGroup);
+      await refreshBloodInventory(existing.hospitalId, existing.bloodGroup, cType);
     }
 
     const updated = await Inventory.findById(req.params.inventoryId);

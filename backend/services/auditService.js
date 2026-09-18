@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const AuditLog = require('../models/AuditLog');
 
 /**
@@ -8,6 +9,8 @@ const AuditLog = require('../models/AuditLog');
  * @param {object} [details] { entity, entityId, hospitalId, summary, meta }
  */
 function logAudit(actor = {}, action, details = {}) {
+  if (mongoose.connection.readyState !== 1) return;
+
   AuditLog.create({
     actorId: actor.userId,
     actorEmail: actor.email,

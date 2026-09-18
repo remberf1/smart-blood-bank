@@ -1,0 +1,85 @@
+name: Smart Blood Bank CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-test:
+    name: Backend Tests & Safety Audits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Run backend unit and integration test suite
+        run: |
+          cd backend
+          npm test
+
+  frontend-build:
+    name: Frontend Build & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build Next.js application
+        run: |
+          cd frontend
+          npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://sbb-api.onrender.com/api
+
+  ml-service:
+    name: ML Demand Prediction Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: ml-service/requirements.txt
+
+      - name: Install ML dependencies
+        run: |
+          cd ml-service
+          pip install -r requirements.txt
+
+      - name: Validate ML model loading & predictions
+        run: |
+          cd ml-service
+          python -c "
+          import json, xgboost as xgb
+          b = xgb.Booster()
+          b.load_model('model.json')
+          meta = json.load(open('meta.json'))
+          print(f'Model loaded successfully. Features: {len(meta[\"feature_cols\"])}')
+          "

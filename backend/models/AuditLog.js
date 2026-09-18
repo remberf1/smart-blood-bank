@@ -17,4 +17,16 @@ const auditLogSchema = new mongoose.Schema({
 auditLogSchema.index({ createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
 
+// Strictly prevent any update or delete operations on audit logs (NDPA & ISO 27001 compliance)
+const blockMutation = function () {
+  throw new Error('AuditLog records are strictly immutable and cannot be modified or deleted.');
+};
+
+auditLogSchema.pre('updateOne', blockMutation);
+auditLogSchema.pre('updateMany', blockMutation);
+auditLogSchema.pre('findOneAndUpdate', blockMutation);
+auditLogSchema.pre('deleteOne', blockMutation);
+auditLogSchema.pre('deleteMany', blockMutation);
+auditLogSchema.pre('findOneAndDelete', blockMutation);
+
 module.exports = mongoose.model('AuditLog', auditLogSchema);

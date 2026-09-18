@@ -3,6 +3,14 @@ const mongoose = require('mongoose');
 const bloodBatchSchema = new mongoose.Schema({
   hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', required: true },
   bloodGroup: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'], required: true },
+  componentType: {
+    type: String,
+    enum: ['WHOLE_BLOOD', 'PACKED_RED_CELLS', 'PLATELET_CONCENTRATE', 'FRESH_FROZEN_PLASMA', 'CRYOPRECIPITATE'],
+    default: 'PACKED_RED_CELLS',
+    required: true,
+  },
+  volumeMl: { type: Number },
+  storageTemperature: { type: String },
   // The donor this batch came from (traceability). Null for manual stock entries.
   donorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Donor' },
   source: { type: String, enum: ['donation', 'manual'], default: 'manual' },
@@ -19,7 +27,7 @@ const bloodBatchSchema = new mongoose.Schema({
   },
 });
 
-// Supports FEFO selection and the expiry sweep.
-bloodBatchSchema.index({ hospitalId: 1, bloodGroup: 1, status: 1, expiryDate: 1 });
+// Supports FEFO selection, component segregation, and the expiry sweep.
+bloodBatchSchema.index({ hospitalId: 1, bloodGroup: 1, componentType: 1, status: 1, expiryDate: 1 });
 
 module.exports = mongoose.model('BloodBatch', bloodBatchSchema);

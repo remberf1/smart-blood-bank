@@ -6,6 +6,13 @@ const patientRequestSchema = new mongoose.Schema({
   email: { type: String }, // optional — for email status updates
   resourceType: { type: String, enum: ['blood', 'oxygen'], required: true },
   bloodGroup: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] },
+  componentType: {
+    type: String,
+    enum: ['WHOLE_BLOOD', 'PACKED_RED_CELLS', 'PLATELET_CONCENTRATE', 'FRESH_FROZEN_PLASMA', 'CRYOPRECIPITATE'],
+    default: 'PACKED_RED_CELLS',
+  },
+  requiresThawing: { type: Boolean, default: false },
+  crossmatchRequired: { type: Boolean, default: true },
   units: { type: Number, required: true, default: 1 },
   urgency: { type: String, enum: ['emergency', 'scheduled', 'routine'], default: 'routine' },
   preferredHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital' },

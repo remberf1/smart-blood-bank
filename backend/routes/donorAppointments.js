@@ -16,19 +16,24 @@ router.post('/', authDonor, async (req, res) => {
       return res.status(404).json({ error: 'Hospital not found' });
     }
 
-    const apptDate = new Date(appointmentDate);
+    let apptDate;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    if (isNaN(apptDate.getTime()) || apptDate < todayStart) {
-      return res.status(400).json({ error: 'Please choose today or a future date to donate.' });
+    if (appointmentDate) {
+      apptDate = new Date(appointmentDate);
+      if (isNaN(apptDate.getTime()) || apptDate < todayStart) {
+        return res.status(400).json({ error: 'Please choose today or a future date to donate.' });
+      }
+    } else {
+      apptDate = new Date();
     }
 
     const appointment = new DonationAppointment({
       donorId,
       hospitalId,
       appointmentDate: apptDate,
-      preferredDay: preferredDay || apptDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }),
+      preferredDay: preferredDay || (appointmentDate ? apptDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : 'Earliest available date'),
       preferredWindow: ['morning', 'afternoon', 'flexible'].includes(preferredWindow) ? preferredWindow : 'morning',
       donorNinMasked: req.donor.ninMasked || undefined,
       notes,

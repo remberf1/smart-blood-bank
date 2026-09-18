@@ -1,9 +1,25 @@
 const { z } = require('zod');
+const { formatNigerianPhone } = require('../utils/phone');
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id');
 const bloodGroup = z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']);
+const componentTypeEnum = z.enum([
+  'WHOLE_BLOOD',
+  'PACKED_RED_CELLS',
+  'PLATELET_CONCENTRATE',
+  'FRESH_FROZEN_PLASMA',
+  'CRYOPRECIPITATE',
+]);
 // Optional email that also tolerates an empty string from forms.
 const optionalEmail = z.email().optional().or(z.literal(''));
+
+// Enforce valid Nigerian E.164 phone formats (080..., 23480..., +23480...) and reject non-digits like 'hh'.
+const nigerianPhone = z.string().refine((val) => Boolean(formatNigerianPhone(val)), {
+  message: 'Invalid phone number. Please enter a valid Nigerian phone number (e.g. 08012345678 or +2348012345678)',
+});
+const optionalNigerianPhone = z.string().refine((val) => !val || Boolean(formatNigerianPhone(val)), {
+  message: 'Invalid phone number. Please enter a valid Nigerian phone number (e.g. 08012345678 or +2348012345678)',
+}).optional().or(z.literal(''));
 
 const loginSchema = z.object({
   email: z.email(),
@@ -45,10 +61,12 @@ const donorDob = z.coerce.date().refine((dob) => {
 
 const donorRegisterSchema = z.object({
   name: z.string().min(1, 'Name is required'),
-  phone: z.string().min(1, 'Phone is required'),
+  phone: nigerianPhone,
   email: optionalEmail,
   password: z.string().min(6, 'Password must be at least 6 characters').optional(),
   bloodGroup,
+  donationTypePreference: z.enum(['WHOLE_BLOOD', 'PLATELET_APHERESIS', 'PLASMA_APHERESIS']).optional().default('WHOLE_BLOOD'),
+  nonRemunerationDeclared: z.boolean().optional().default(true),
   location: z.object({
     type: z.literal('Point').optional(),
     coordinates: z.array(z.number()).length(2, 'coordinates must be [lng, lat]'),
@@ -64,14 +82,16 @@ const donorRegisterSchema = z.object({
 const patientRequestSchema = z
   .object({
     patientName: z.string().optional(),
-    contactPhone: z.string().min(1, 'Contact phone is required'),
+    contactPhone: nigerianPhone,
     email: optionalEmail,
     doctorName: z.string().optional(),
-    doctorPhone: z.string().optional(),
+    doctorPhone: optionalNigerianPhone,
     clinicalIndication: z.string().optional(),
     referenceId: z.string().optional(),
     resourceType: z.enum(['blood', 'oxygen']),
     bloodGroup: bloodGroup.optional(),
+    componentType: componentTypeEnum.optional().default('PACKED_RED_CELLS'),
+    requiresThawing: z.boolean().optional().default(false),
     units: z.coerce.number().int().positive().default(1),
     urgency: z.enum(['emergency', 'scheduled', 'routine']).optional(),
     preferredHospitalId: objectId.optional(),
@@ -91,6 +111,7 @@ const resourceRequestSchema = z.object({
   supplyingHospitalId: objectId,
   resourceType: z.enum(['blood', 'oxygen']),
   bloodGroup: bloodGroup.optional(),
+  componentType: componentTypeEnum.optional().default('PACKED_RED_CELLS'),
   units: z.coerce.number().int().positive(),
   notes: z.string().optional(),
 });
@@ -104,4 +125,5 @@ module.exports = {
   donorRegisterSchema,
   patientRequestSchema,
   resourceRequestSchema,
+  nigerianPhone,
 };

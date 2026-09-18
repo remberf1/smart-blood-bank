@@ -56,15 +56,21 @@ async function recordDonationForDonor(donor, hospitalId, triageData = null) {
   // Tag the donor's home hospital on their first recorded donation.
   if (!donor.homeHospitalId) donor.homeHospitalId = hospitalId;
   await donor.save();
+
+  const componentType = triageData?.componentType ||
+    (donor.donationTypePreference === 'PLATELET_APHERESIS' ? 'PLATELET_CONCENTRATE' :
+     donor.donationTypePreference === 'PLASMA_APHERESIS' ? 'FRESH_FROZEN_PLASMA' : 'WHOLE_BLOOD');
+
   const units = await addBloodUnits({
     hospitalId,
     bloodGroup: donor.bloodGroup,
+    componentType,
     units: 1,
     donorId: donor._id,
     source: "donation",
   });
   allocateBlood().catch(console.error);
-  return { bloodGroup: donor.bloodGroup, units };
+  return { bloodGroup: donor.bloodGroup, componentType, units };
 }
 
 // ==================== REGISTER DONOR ====================
@@ -82,6 +88,8 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       weight,
       allergies,
       nin,
+      donationTypePreference,
+      nonRemunerationDeclared,
       lastDonationDate,
     } = req.body;
 
@@ -143,6 +151,8 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       email: normalizedEmail || undefined,
       password,
       bloodGroup,
+      donationTypePreference: donationTypePreference || 'WHOLE_BLOOD',
+      nonRemunerationDeclared: nonRemunerationDeclared !== false,
       location,
       dateOfBirth,
       gender,

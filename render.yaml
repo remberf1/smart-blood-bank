@@ -14,14 +14,13 @@ services:
     runtime: python
     rootDir: ml-service
     plan: free
-    # Train the model on every deploy (fast, data is generated in-code) so no
-    # binary model artifact needs to live in git.
-    buildCommand: pip install -r requirements.txt && python train.py
+    # Fast deploy: uses pre-trained model artifact if present, trains if missing.
+    buildCommand: pip install -r requirements.txt && (test -f model.json || python train.py)
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: "3.13.7"
+        value: "3.12.8"
 
   # ---------------- Node / Express API ----------------
   - type: web
@@ -29,9 +28,9 @@ services:
     runtime: node
     rootDir: backend
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: node server.js
-    healthCheckPath: /
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "22"
@@ -80,9 +79,8 @@ services:
     runtime: node
     rootDir: frontend
     plan: free
-    # --include=dev: Next needs typescript/tailwind, which live in devDependencies
-    # and would be skipped under Render's production install otherwise.
-    buildCommand: npm install --include=dev && npm run build
+    # --include=dev: Next needs typescript/tailwind, which live in devDependencies.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start -- -p $PORT -H 0.0.0.0
     envVars:
       - key: NODE_VERSION

@@ -150,9 +150,14 @@ app.use('/api/forecast', forecastRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/badges', badgeRoutes);
 
-// Simple health check
-app.get('/', (req, res) => {
-  res.json({ message: 'Smart Blood Bank API is running' });
+// Health check endpoints for Render and uptime monitoring
+app.get(['/', '/health'], (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Smart Blood Bank API is running',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Centralized error handler: log details server-side, return generic message.
