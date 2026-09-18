@@ -15,11 +15,15 @@ const { logAudit } = require("../services/auditService");
 // Create a new request (supports advance scheduling)
 router.post("/", validate(patientRequestSchema), async (req, res) => {
   try {
-    const { resourceType, bloodGroup, scheduledTime, ...rest } = req.body;
+    const { resourceType, bloodGroup, scheduledTime, referenceId, ...rest } = req.body;
+
+    // Generate a human-friendly clinical reference ID (e.g. SBB-4A7F2) if not provided
+    const genRef = referenceId || `SBB-${Math.random().toString(16).substring(2, 7).toUpperCase()}`;
 
     const request = new PatientRequest({
       resourceType,
       bloodGroup,
+      referenceId: genRef,
       scheduledTime: scheduledTime ? new Date(scheduledTime) : undefined,
       deliveryStatus: "pending",
       ...rest
@@ -27,20 +31,27 @@ router.post("/", validate(patientRequestSchema), async (req, res) => {
     await request.save();
     if (resourceType === "blood") allocateBlood().catch(console.error);
     if (resourceType === "oxygen") allocateOxygen().catch(console.error);
-    res.status(201).json({ message: "Request received", requestId: request._id, request });
+    res.status(201).json({ message: "Request received", requestId: request._id, referenceId: genRef, request });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Track requests by phone number or reference ID (for patients/families).
-// Matches on last 10 digits for phone, or hex reference for ID.
+// Matches on SBB- referenceId, last 10 digits for phone, or hex reference for ID.
 router.get("/track/:query", async (req, res) => {
   try {
     const raw = String(req.params.query || "").trim();
     const digits = raw.replace(/\D/g, "");
 
     const mongoose = require('mongoose');
+
+    // 1. Direct match by referenceId (e.g., SBB-4A7F2)
+    const byRef = await PatientRequest.find({ referenceId: new RegExp('^' + raw.replace('SBB-', '') + '$|^SBB-' + raw.replace('SBB-', '') + '$', 'i') })
+      .populate("preferredHospitalId", "name address contactPhone location")
+      .populate("allocatedHospitalId", "name address contactPhone location");
+    if (byRef.length > 0) return res.json(byRef);
+
     if (mongoose.Types.ObjectId.isValid(raw) && raw.length === 24) {
       const single = await PatientRequest.findById(raw)
         .populate("preferredHospitalId", "name address contactPhone location")
@@ -52,7 +63,7 @@ router.get("/track/:query", async (req, res) => {
       const allRecent = await PatientRequest.find().sort({ createdAt: -1 }).limit(100)
         .populate("preferredHospitalId", "name address contactPhone location")
         .populate("allocatedHospitalId", "name address contactPhone location");
-      const matched = allRecent.filter(r => r._id.toString().toLowerCase().endsWith(raw.toLowerCase()));
+      const matched = allRecent.filter(r => r._id.toString().toLowerCase().endsWith(raw.toLowerCase()) || (r.referenceId && r.referenceId.toLowerCase().includes(raw.toLowerCase())));
       return res.json(matched);
     }
 

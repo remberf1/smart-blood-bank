@@ -9,6 +9,10 @@ const patientRequestSchema = new mongoose.Schema({
   units: { type: Number, required: true, default: 1 },
   urgency: { type: String, enum: ['emergency', 'scheduled', 'routine'], default: 'routine' },
   preferredHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital' },
+  referenceId: { type: String, trim: true }, // e.g., "SBB-4A7F2"
+  doctorName: { type: String, trim: true },
+  doctorPhone: { type: String, trim: true },
+  clinicalIndication: { type: String, trim: true },
 
   // --- Fields for advance scheduling and delivery tracking ---
   scheduledTime: { type: Date },                     // when the patient needs the resource (e.g., next week 4pm)

@@ -15,17 +15,20 @@ import { useAuth } from '../../contexts/AuthContext';
 
 interface Appt {
   _id: string;
-  donorId?: { _id: string; name: string; phone: string; bloodGroup: string; eligibilityStatus: string } | null;
+  donorId?: { _id: string; name: string; phone: string; bloodGroup: string; eligibilityStatus: string; ninMasked?: string } | null;
   hospitalId?: { _id: string; name: string } | null;
   appointmentDate: string;
+  preferredDay?: string;
+  preferredWindow?: string;
+  donorNinMasked?: string;
   status: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'missed';
   notes?: string;
 }
 
 const FILTERS = ['', 'pending', 'scheduled', 'completed', 'cancelled', 'missed'];
-const LABEL: Record<string, string> = { scheduled: 'confirmed' };
+const LABEL: Record<string, string> = { pending: 'offer submitted', scheduled: 'confirmed' };
 const NEXT: Record<string, { status: string; label: string; variant?: any }[]> = {
-  pending: [{ status: 'scheduled', label: 'Accept' }, { status: 'cancelled', label: 'Decline', variant: 'destructive' }],
+  pending: [{ status: 'scheduled', label: 'Accept Offer' }, { status: 'cancelled', label: 'Decline', variant: 'destructive' }],
   scheduled: [{ status: 'completed', label: 'Completed' }, { status: 'missed', label: 'Missed', variant: 'outline' }, { status: 'cancelled', label: 'Cancel', variant: 'destructive' }],
 };
 
@@ -123,7 +126,7 @@ export default function AppointmentsPage() {
                 <TableHead>Donor</TableHead>
                 <TableHead>Blood</TableHead>
                 <TableHead>Hospital</TableHead>
-                <TableHead>Date &amp; time</TableHead>
+                <TableHead>Offered Day &amp; Window</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Notes</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -140,12 +143,24 @@ export default function AppointmentsPage() {
                     <TableCell>
                       <div className="font-medium">{a.donorId?.name || '—'}</div>
                       <div className="text-xs text-muted-foreground">{a.donorId?.phone}</div>
+                      {(a.donorId?.ninMasked || a.donorNinMasked) && (
+                        <div className="text-[11px] font-mono text-muted-foreground">NIN: {a.donorId?.ninMasked || a.donorNinMasked}</div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <span className="flex items-center gap-1"><Droplet className="h-4 w-4 text-red-500" /> {a.donorId?.bloodGroup}</span>
                     </TableCell>
                     <TableCell className="text-sm">{a.hospitalId?.name || '—'}</TableCell>
-                    <TableCell className="text-sm">{new Date(a.appointmentDate).toLocaleString()}</TableCell>
+                    <TableCell className="text-sm">
+                      <div className="font-medium">
+                        {a.preferredDay
+                          ? new Date(a.preferredDay + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                          : new Date(a.appointmentDate).toLocaleDateString()}
+                      </div>
+                      <div className="text-xs capitalize text-muted-foreground">
+                        {a.preferredWindow ? `${a.preferredWindow} window` : new Date(a.appointmentDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </TableCell>
                     <TableCell>{badge(a.status)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-[200px]">{a.notes || <span className="text-muted-foreground/60">—</span>}</TableCell>
                     <TableCell className="text-right">

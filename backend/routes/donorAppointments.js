@@ -7,7 +7,7 @@ const authDonor = require('../middleware/authDonor');
 // Create an appointment (protected)
 router.post('/', authDonor, async (req, res) => {
   try {
-    const { hospitalId, appointmentDate, notes } = req.body;
+    const { hospitalId, appointmentDate, preferredDay, preferredWindow, notes } = req.body;
     const donorId = req.donor._id;
 
     // Validate hospital exists
@@ -16,15 +16,21 @@ router.post('/', authDonor, async (req, res) => {
       return res.status(404).json({ error: 'Hospital not found' });
     }
 
-    // Ensure appointmentDate is in the future (optional)
-    if (new Date(appointmentDate) < new Date()) {
-      return res.status(400).json({ error: 'Appointment date must be in the future' });
+    const apptDate = new Date(appointmentDate);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    if (isNaN(apptDate.getTime()) || apptDate < todayStart) {
+      return res.status(400).json({ error: 'Please choose today or a future date to donate.' });
     }
 
     const appointment = new DonationAppointment({
       donorId,
       hospitalId,
-      appointmentDate,
+      appointmentDate: apptDate,
+      preferredDay: preferredDay || apptDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }),
+      preferredWindow: ['morning', 'afternoon', 'flexible'].includes(preferredWindow) ? preferredWindow : 'morning',
+      donorNinMasked: req.donor.ninMasked || undefined,
       notes,
     });
     await appointment.save();

@@ -185,6 +185,18 @@ router.put('/profile', authDonor, async (req, res) => {
     if (typeof name === 'string' && name.trim()) donor.name = name.trim();
     if (typeof sosOptIn === 'boolean') donor.sosOptIn = sosOptIn;
     if (typeof allergies === 'string') donor.allergies = allergies.trim();
+    if (nin !== undefined) {
+      const cleanNin = typeof nin === 'string' ? nin.replace(/\D/g, '') : '';
+      if (cleanNin) {
+        if (cleanNin.length !== 11) {
+          return res.status(400).json({ error: 'NIN must be exactly 11 digits.' });
+        }
+        const exists = await Donor.findOne({ nin: cleanNin, _id: { $ne: donor._id } });
+        if (exists) return res.status(400).json({ error: 'That National Identification Number (NIN) is already registered.' });
+        donor.nin = cleanNin;
+        donor.ninMasked = '*******' + cleanNin.slice(-4);
+      }
+    }
     if (location && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
       const [lng, lat] = location.coordinates.map(Number);
       if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
@@ -201,10 +213,11 @@ router.put('/profile', authDonor, async (req, res) => {
         email: donor.email,
         phone: donor.phone,
         bloodGroup: donor.bloodGroup,
+        ninMasked: donor.ninMasked,
+        allergies: donor.allergies,
         eligibilityStatus: donor.eligibilityStatus,
         sosOptIn: donor.sosOptIn,
         location: donor.location,
-        allergies: donor.allergies,
         qrCode: donor.qrCode,
       },
     });

@@ -81,6 +81,7 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       gender,
       weight,
       allergies,
+      nin,
       lastDonationDate,
     } = req.body;
 
@@ -115,6 +116,22 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       }
     }
 
+    // Check duplicate NIN if provided (prevents multiple registrations under aliases)
+    const cleanNin = typeof nin === "string" ? nin.replace(/\D/g, "") : "";
+    if (cleanNin) {
+      if (cleanNin.length !== 11) {
+        return res.status(400).json({
+          error: "National Identification Number (NIN) must be exactly 11 digits.",
+        });
+      }
+      const existingNin = await Donor.findOne({ nin: cleanNin });
+      if (existingNin) {
+        return res.status(400).json({
+          error: "A donor account with this National Identification Number (NIN) is already registered.",
+        });
+      }
+    }
+
     // Calculate eligibility using the shared rules (accurate age, weight, wait).
     const { status: eligibilityStatus, reason: deferralReason } =
       evaluateDonorEligibility({ dateOfBirth, weight, lastDonationDate });
@@ -131,6 +148,7 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       gender,
       weight,
       allergies: typeof allergies === "string" ? allergies.trim() : "",
+      nin: cleanNin || undefined,
       lastDonationDate,
       eligibilityStatus,
       deferralReason,

@@ -66,8 +66,8 @@ export default function Home() {
             Blood and oxygen, <span className="text-red-600">when every minute counts.</span>
           </h1>
           <p className="mt-5 text-gray-600 text-base sm:text-xl max-w-2xl mx-auto leading-relaxed">
-            Find available blood units near you, request emergency resources, coordinate bedside delivery,
-            and get instant updates via WhatsApp and Email.
+            Coordinate doctor-authorized blood requisitions, locate emergency hospital care, verify oxygen reserves,
+            and track cold-chain delivery with instant WhatsApp and Email notifications.
           </p>
 
           {/* Primary Action Buttons */}
@@ -347,6 +347,7 @@ export default function Home() {
             <Link href="/track" className="hover:text-white transition-colors">Track Request</Link>
             <Link href="/donor/login" className="hover:text-white transition-colors">Donor Portal</Link>
             <Link href="/education" className="hover:text-white transition-colors">Donor Eligibility</Link>
+            <Link href="/privacy" className="hover:text-white transition-colors">Privacy &amp; NDPA</Link>
             <Link href="/login" className="text-red-400 hover:text-red-300 transition-colors">Hospital Dashboard</Link>
           </div>
         </div>

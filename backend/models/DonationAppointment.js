@@ -4,7 +4,14 @@ const donationAppointmentSchema = new mongoose.Schema({
   donorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Donor', required: true },
   hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', required: true },
   appointmentDate: { type: Date, required: true },
-  // 'pending' = donor requested, awaiting hospital confirmation
+  preferredDay: { type: String }, // e.g. "Friday, 19 Sep 2026"
+  preferredWindow: {
+    type: String,
+    enum: ['morning', 'afternoon', 'flexible'],
+    default: 'morning',
+  },
+  donorNinMasked: { type: String },
+  // 'pending' = donor offered a day, awaiting hospital confirmation
   // 'scheduled' = confirmed by the hospital, then completed/missed/cancelled
   status: {
     type: String,

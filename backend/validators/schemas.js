@@ -57,6 +57,7 @@ const donorRegisterSchema = z.object({
   gender: z.enum(['Male', 'Female', 'Other']).optional(),
   weight: z.coerce.number().min(30, 'Weight must be at least 30 kg').max(300, 'Weight cannot exceed 300 kg').optional(),
   allergies: z.string().optional(),
+  nin: z.string().regex(/^\d{11}$/, 'NIN must be exactly 11 digits').optional().or(z.literal('')),
   lastDonationDate: z.coerce.date().optional(),
 });
 
@@ -65,6 +66,10 @@ const patientRequestSchema = z
     patientName: z.string().optional(),
     contactPhone: z.string().min(1, 'Contact phone is required'),
     email: optionalEmail,
+    doctorName: z.string().optional(),
+    doctorPhone: z.string().optional(),
+    clinicalIndication: z.string().optional(),
+    referenceId: z.string().optional(),
     resourceType: z.enum(['blood', 'oxygen']),
     bloodGroup: bloodGroup.optional(),
     units: z.coerce.number().int().positive().default(1),

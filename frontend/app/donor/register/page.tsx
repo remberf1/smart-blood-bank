@@ -23,7 +23,7 @@ export default function DonorRegister() {
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '',
     bloodGroup: '', dateOfBirth: '', gender: '', weight: '',
-    allergies: '',
+    allergies: '', nin: '',
   });
 
   useEffect(() => {
@@ -50,6 +50,11 @@ export default function DonorRegister() {
     if (dob > now) { setError('Date of birth cannot be in the future.'); return; }
     const age = (now.getTime() - dob.getTime()) / (365.25 * 86400000);
     if (age < 16) { setError('Donors must be at least 16 years old to register.'); return; }
+    const cleanNin = form.nin.replace(/\D/g, '');
+    if (!cleanNin || cleanNin.length !== 11) {
+      setError('Please enter a valid 11-digit National Identification Number (NIN).');
+      return;
+    }
     if (form.weight && (Number(form.weight) < 30 || Number(form.weight) > 300)) {
       setError('Please enter a realistic weight between 30 kg and 300 kg.');
       return;
@@ -66,6 +71,7 @@ export default function DonorRegister() {
         gender: form.gender || undefined,
         weight: form.weight ? Number(form.weight) : undefined,
         allergies: form.allergies ? form.allergies.trim() : undefined,
+        nin: cleanNin,
         location: { type: 'Point', coordinates: coords || DEFAULT_COORDS },
       });
       // Auto sign-in so onboarding is one smooth flow.
@@ -145,6 +151,26 @@ export default function DonorRegister() {
                   <Label>Weight (kg)</Label>
                   <Input type="number" min={30} max={300} value={form.weight} onChange={(e) => set({ weight: e.target.value })} placeholder="e.g. 65" />
                 </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label>National Identification Number (NIN) *</Label>
+                  <span className="text-[11px] text-gray-400">{form.nin.replace(/\D/g, '').length} / 11 digits</span>
+                </div>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={11}
+                  value={form.nin}
+                  onChange={(e) => set({ nin: e.target.value.replace(/\D/g, '') })}
+                  placeholder="11-digit NIN (e.g. 12345678901)"
+                  required
+                />
+                <p className="text-[11px] text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-emerald-600 font-semibold">🔒 Protected:</span>
+                  <span>Encrypted under NDPA 2023. Required by NBSC for identity verification.</span>
+                  <Link href="/privacy" className="text-red-600 hover:underline">Read Privacy Policy</Link>
+                </p>
               </div>
               <div>
                 <Label>Allergies / Medical Notes (optional)</Label>

@@ -93,6 +93,17 @@ export default function SosPage() {
           </div>
         </div>
 
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 mb-5 text-amber-950 text-xs flex items-start gap-2.5 shadow-xs">
+          <span className="text-lg leading-none">⚠️</span>
+          <div>
+            <strong className="font-semibold text-amber-900">Clinical Emergency Protocol:</strong>
+            <p className="mt-0.5 text-amber-800/90 leading-relaxed">
+              Emergency donor broadcasts alert voluntary donors to report directly to accredited hospital transfusion centers.
+              Blood transfusion is a prescription-only procedure requiring attending physician oversight and laboratory crossmatching.
+            </p>
+          </div>
+        </div>
+
         {result ? (
           <Card>
             <CardContent className="p-8 text-center space-y-4">

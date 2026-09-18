@@ -32,6 +32,8 @@ const donorSchema = new mongoose.Schema({
   // by SOS regardless of hospital); this is a tag, not an access boundary.
   homeHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: "Hospital" },
   allergies: { type: String, default: '' },
+  nin: { type: String, trim: true, select: false },
+  ninMasked: { type: String, trim: true },
   notes: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -55,6 +57,12 @@ donorSchema.index({ location: "2dsphere" });
 donorSchema.pre("save", async function () {
   // Update timestamp
   this.updatedAt = Date.now();
+
+  // Auto-mask NIN if provided
+  if (this.isModified("nin") && this.nin) {
+    const cleanNin = this.nin.replace(/\D/g, '');
+    this.ninMasked = cleanNin.length >= 4 ? '*******' + cleanNin.slice(-4) : cleanNin;
+  }
   
   // Hash password if modified
   if (this.isModified("password") && this.password) {

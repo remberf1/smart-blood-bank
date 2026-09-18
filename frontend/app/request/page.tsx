@@ -20,6 +20,9 @@ export default function PublicRequestPage() {
     patientName: '',
     contactPhone: '',
     email: '',
+    doctorName: '',
+    doctorPhone: '',
+    clinicalAcknowledged: false,
     resourceType: 'blood' as 'blood' | 'oxygen',
     bloodGroup: '',
     units: 1,
@@ -45,6 +48,14 @@ export default function PublicRequestPage() {
       setError('Please select a blood group.');
       return;
     }
+    if (!form.doctorName.trim()) {
+      setError('Please provide the attending doctor or clinician name.');
+      return;
+    }
+    if (!form.clinicalAcknowledged) {
+      setError('You must confirm that this requisition is ordered by a licensed physician for in-hospital administration.');
+      return;
+    }
     if (form.urgency === 'scheduled' && !form.scheduledTime) {
       setError('Please select the scheduled date and time for the transfusion.');
       return;
@@ -56,8 +67,10 @@ export default function PublicRequestPage() {
         resourceType: form.resourceType,
         units: form.units,
         urgency: form.urgency,
+        doctorName: form.doctorName.trim(),
       };
       if (form.patientName) payload.patientName = form.patientName;
+      if (form.doctorPhone) payload.doctorPhone = form.doctorPhone.trim();
       if (form.email) payload.email = form.email;
       if (form.resourceType === 'blood') payload.bloodGroup = form.bloodGroup;
       if (form.urgency === 'scheduled' && form.scheduledTime) payload.scheduledTime = form.scheduledTime;
@@ -68,8 +81,8 @@ export default function PublicRequestPage() {
       if (form.notes) payload.notes = form.notes;
 
       const res = await apiClient.post('/patient-requests', payload);
-      const id: string = res.data.requestId || res.data.request?._id || '';
-      setDone({ ref: id.slice(-6).toUpperCase() });
+      const id: string = res.data.referenceId || res.data.requestId || res.data.request?._id || '';
+      setDone({ ref: id.startsWith('SBB-') ? id : id.slice(-6).toUpperCase() });
     } catch (err: any) {
       setError(
         err.response?.data?.details?.[0]?.message ||
@@ -97,15 +110,30 @@ export default function PublicRequestPage() {
           </div>
         </div>
 
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6 text-amber-950 shadow-xs">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl leading-none">⚠️</span>
+            <div>
+              <h3 className="font-bold text-sm text-amber-900">Strict Clinical &amp; Anti-Self-Medication Notice</h3>
+              <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
+                Blood transfusion and medical oxygen therapy are <strong>prescription-only hospital procedures</strong> under National Blood Service Commission (NBSC) and MDCN standards.
+                Self-medication or home delivery is strictly prohibited. All blood units are dispatched exclusively to accredited hospital blood banks for physician administration.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {done ? (
           <Card>
             <CardContent className="p-8 text-center space-y-3">
               <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto" />
-              <h2 className="text-lg font-bold text-gray-800">Request received</h2>
-              <p className="text-gray-600">
-                Your reference is <strong>{done.ref || 'submitted'}</strong>. A hospital will be matched
-                shortly and we&apos;ll notify you
-                {form.email ? ' by WhatsApp and email' : ' by WhatsApp'} as your request progresses.
+              <h2 className="text-lg font-bold text-gray-800">Requisition Received</h2>
+              <p className="text-gray-600 text-sm">
+                Reference ID: <strong className="text-red-600 font-mono text-base">{done.ref || 'submitted'}</strong>.
+              </p>
+              <p className="text-gray-600 text-xs">
+                Show this reference ID to Dr. {form.doctorName || 'your attending physician'} or the hospital blood bank to coordinate clinical transfer.
+                We&apos;ll notify you {form.email ? 'by WhatsApp and email' : 'by WhatsApp'} as the transfer progresses.
               </p>
               <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
                 <Link
@@ -136,12 +164,51 @@ export default function PublicRequestPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <HeartPulse className="h-5 w-5 text-red-500" /> New request
+                <HeartPulse className="h-5 w-5 text-red-500" /> New clinical requisition
               </CardTitle>
             </CardHeader>
             <CardContent>
               {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Attending Physician & Clinical Order Safeguard */}
+                <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3.5 space-y-3">
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                    <span>🩺</span> Attending Physician &amp; Clinical Order
+                  </p>
+                  <div>
+                    <Label className="text-xs font-medium">Attending Doctor&apos;s Name *</Label>
+                    <Input
+                      value={form.doctorName}
+                      onChange={(e) => set({ doctorName: e.target.value })}
+                      placeholder="e.g. Dr. A. Adeleke"
+                      className="mt-1 bg-white"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">Doctor&apos;s Phone / Folio (Optional)</Label>
+                    <Input
+                      value={form.doctorPhone}
+                      onChange={(e) => set({ doctorPhone: e.target.value })}
+                      placeholder="e.g. 08012345678"
+                      className="mt-1 bg-white"
+                    />
+                  </div>
+                  <div className="flex items-start gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="clinicalAck"
+                      checked={form.clinicalAcknowledged}
+                      onChange={(e) => set({ clinicalAcknowledged: e.target.checked })}
+                      className="mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                      required
+                    />
+                    <label htmlFor="clinicalAck" className="text-xs text-gray-700 leading-relaxed cursor-pointer">
+                      I confirm this requisition is ordered or supervised by a licensed medical doctor for in-hospital administration. I understand that blood cannot be delivered to private residences and self-medication is strictly prohibited.
+                    </label>
+                  </div>
+                </div>
+
                 <div>
                   <Label>Patient name (optional)</Label>
                   <Input value={form.patientName} onChange={(e) => set({ patientName: e.target.value })} placeholder="e.g. Jane Doe" />
