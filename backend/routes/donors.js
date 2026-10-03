@@ -14,6 +14,12 @@ const { allocateBlood } = require("../services/allocationService");
 const { validate } = require("../middleware/validate");
 const { donorRegisterSchema, verifyBloodGroupSchema } = require("../validators/schemas");
 const { logAudit } = require("../services/auditService");
+const crypto = require("crypto");
+const {
+  sendEmail,
+  buildDonorVerificationEmail,
+  sendDonorVerificationOtp,
+} = require("../services/notificationService");
 
 // Shared donation-recording logic used by both the QR-scan (/verify) and the
 // direct by-donor (/:donorId/record-donation) paths: gate on eligibility, defer
@@ -201,7 +207,12 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     const { status: eligibilityStatus, reason: deferralReason } =
       evaluateDonorEligibility({ dateOfBirth, weight, lastDonationDate });
 
-    // Create donor with formatted phone
+    // Generate secure multi-channel verification tokens
+    const phoneOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const now = Date.now();
+
+    // Create donor with formatted phone and unverified state
     const reportedGroup = req.body.bloodGroupSelfReported || bloodGroup || "UNKNOWN";
     const donor = new Donor({
       name,
@@ -212,6 +223,14 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       bloodGroupSelfReported: reportedGroup,
       bloodGroupVerified: null,
       bloodGroupVerificationStatus: 'unverified',
+      isVerified: false,
+      emailVerified: false,
+      phoneVerified: false,
+      phoneOtp,
+      phoneOtpExpires: new Date(now + 15 * 60 * 1000), // 15 mins
+      phoneOtpExpiry: new Date(now + 15 * 60 * 1000),
+      verificationToken,
+      verificationTokenExpiry: new Date(now + 24 * 60 * 60 * 1000), // 24 hours
       donationTypePreference: donationTypePreference || 'WHOLE_BLOOD',
       nonRemunerationDeclared: nonRemunerationDeclared !== false,
       location,
@@ -228,7 +247,6 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     await donor.save();
 
     // Generate QR code holding only a signed token (no PII in the QR itself).
-    // Staff scan it and the /verify endpoint resolves the donor server-side.
     const qrToken = jwt.sign(
       { donorId: donor._id, type: "donor-verify" },
       process.env.JWT_SECRET
@@ -241,25 +259,54 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
         margin: 1,
         width: 300,
       });
-      console.log("QR code generated successfully, length:", qrCodeUrl.length);
     } catch (qrError) {
       console.error("QR generation failed:", qrError);
       qrCodeUrl = null;
     }
 
-    // Update donor with QR code
     donor.qrCode = qrCodeUrl;
     await donor.save();
 
+    // Trigger multi-channel verification dispatch
+    const appUrl = process.env.APP_URL || 'http://localhost:3000';
+    if (donor.email) {
+      const verifyUrl = `${appUrl}/donor/verify?token=${verificationToken}&email=${encodeURIComponent(donor.email)}`;
+      const emailContent = buildDonorVerificationEmail({ name: donor.name, verifyUrl, otpCode: phoneOtp });
+      sendEmail(donor.email, emailContent.subject, emailContent.text, emailContent.html).catch((err) =>
+        console.warn('Registration verification email notice failed:', err.message)
+      );
+    }
+
+    if (donor.phone) {
+      sendDonorVerificationOtp(donor.phone, phoneOtp).catch((err) =>
+        console.warn('Registration WhatsApp OTP notice failed:', err.message)
+      );
+    }
+
+    logAudit(
+      { _id: donor._id, role: 'donor', name: donor.name },
+      'donor.registered_pending_verification',
+      {
+        entity: 'Donor',
+        entityId: donor._id,
+        summary: `Donor registered with unverified identity. Verification tokens dispatched to WhatsApp and email.`,
+      }
+    );
+
     res.status(201).json({
-      message: "Donor registered successfully",
+      message: "Donor registration initiated. Please verify your account using the 6-digit code sent to your WhatsApp/SMS or the link sent to your email.",
+      pendingVerification: true,
+      email: donor.email,
+      phone: donor.phone,
       donor: {
         id: donor._id,
         name: donor.name,
         phone: donor.phone,
+        email: donor.email,
         bloodGroup: donor.bloodGroup,
         eligibilityStatus: donor.eligibilityStatus,
         deferralReason: donor.deferralReason,
+        isVerified: false,
         qrCode: donor.qrCode,
       },
     });

@@ -73,6 +73,11 @@ jobs:
           cd ml-service
           pip install -r requirements.txt
 
+      - name: Train ML demand forecasting model
+        run: |
+          cd ml-service
+          python train.py
+
       - name: Validate ML model loading & predictions
         run: |
           cd ml-service

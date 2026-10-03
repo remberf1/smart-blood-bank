@@ -8,25 +8,32 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Droplet, ArrowLeft } from 'lucide-react';
+import { Droplet, ArrowLeft, ShieldAlert } from 'lucide-react';
 
 export default function DonorLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [pendingVerification, setPendingVerification] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setPendingVerification(false);
     setLoading(true);
     try {
       const res = await apiClient.post('/donor/auth/login', { email, password });
       localStorage.setItem('donorToken', res.data.token);
       router.push('/donor/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Login failed');
+      if (err.response?.data?.pendingVerification || err.response?.status === 403) {
+        setPendingVerification(true);
+        setError(err.response?.data?.error || 'Your donor account is pending verification. Please confirm your OTP or click your email verification link.');
+      } else {
+        setError(err.response?.data?.error || 'Login failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -53,7 +60,22 @@ export default function DonorLogin() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+            {error && (
+              <div className="mb-4">
+                <p className="text-red-500 text-sm bg-red-50 p-2.5 rounded-lg border border-red-200">{error}</p>
+                {pendingVerification && (
+                  <div className="mt-2 text-center">
+                    <Link
+                      href={`/donor/verify?email=${encodeURIComponent(email)}`}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-700 underline"
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      Verify your account now with WhatsApp OTP or Email →
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <Label>Email</Label>

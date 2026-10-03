@@ -6,7 +6,8 @@
 //   node scripts/test-email.js you@example.com        -> welcome template to that address
 //   node scripts/test-email.js you@example.com status -> a specific template
 //   templates: welcome | status | eligible | reminder
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const {
   EMAIL_ENABLED,
   sendEmail,
@@ -14,6 +15,7 @@ const {
   buildRequestStatusEmail,
   buildEligibleEmail,
   buildAppointmentReminderEmail,
+  buildDonorVerificationEmail,
 } = require('../services/notificationService');
 
 const to = process.argv[2] || process.env.SMTP_USER;
@@ -21,6 +23,12 @@ const which = (process.argv[3] || 'welcome').toLowerCase();
 
 const templates = {
   welcome: () => buildWelcomeEmail({ name: 'Test User', role: 'staff', email: to }),
+  verify: () =>
+    buildDonorVerificationEmail({
+      name: 'Babatunde Fashola',
+      verifyUrl: 'http://localhost:3000/donor/verify?token=testtoken123&email=' + encodeURIComponent(to),
+      otpCode: '260640',
+    }),
   status: () =>
     buildRequestStatusEmail({
       _id: '64f0aa11bb22cc33dd44ee55',

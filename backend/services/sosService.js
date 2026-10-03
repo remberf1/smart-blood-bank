@@ -223,6 +223,7 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
   const compatibleGroups = getCompatibleDonors(bloodGroup);
   const targetGroups = compatibleGroups.length ? compatibleGroups : [bloodGroup];
   const donors = await Donor.find({
+    isVerified: { $ne: false },
     $or: [
       { bloodGroupVerified: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
       { bloodGroup: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
@@ -347,6 +348,7 @@ async function verifyAndBroadcastSOS(sosId, user) {
   const targetGroups = compatibleGroups.length ? compatibleGroups : [sos.bloodGroup];
 
   const donors = await Donor.find({
+    isVerified: { $ne: false },
     $or: [
       { bloodGroupVerified: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
       { bloodGroup: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },

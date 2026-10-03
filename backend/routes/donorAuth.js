@@ -6,12 +6,18 @@ const QRCode = require('qrcode');
 const Donor = require('../models/Donor');
 const { validate } = require('../middleware/validate');
 const { forgotPasswordSchema, resetPasswordSchema, donorCorrectionRequestSchema } = require('../validators/schemas');
-const { sendEmail, buildPasswordResetEmail } = require('../services/notificationService');
+const {
+  sendEmail,
+  buildPasswordResetEmail,
+  buildDonorVerificationEmail,
+  sendDonorVerificationOtp,
+} = require('../services/notificationService');
 const { generateResetToken, hashToken } = require('../utils/passwordReset');
 const authDonor = require('../middleware/authDonor');
 const { formatNigerianPhone } = require('../utils/phone');
 const DonationAppointment = require('../models/DonationAppointment');
 const { logAudit } = require('../services/auditService');
+const crypto = require('crypto');
 
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
@@ -36,6 +42,16 @@ router.post('/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, donor.password);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Gate: Unverified account cannot sign in until verification completed
+    if (donor.isVerified === false) {
+      return res.status(403).json({
+        error: 'Your account is pending verification. Please verify your email or enter your phone/WhatsApp code to activate your account.',
+        pendingVerification: true,
+        email: donor.email,
+        phone: donor.phone,
+      });
     }
 
     // Generate JWT token (expires in 30 days)
@@ -108,6 +124,233 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
     res.json({ message: 'Password updated. You can now sign in with your new password.' });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== VERIFY DONOR CODE (Phone OTP or Email Code) ====================
+router.post('/verify-code', async (req, res) => {
+  try {
+    const { email, phone, code } = req.body;
+    if (!code || typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ error: 'Please enter the 6-digit verification code.' });
+    }
+    const cleanCode = code.trim();
+
+    const query = [];
+    if (email && typeof email === 'string' && email.trim()) {
+      query.push({ email: email.trim().toLowerCase() });
+    }
+    if (phone && typeof phone === 'string' && phone.trim()) {
+      const formatted = formatNigerianPhone(phone);
+      if (formatted) query.push({ phone: formatted });
+    }
+
+    if (query.length === 0) {
+      return res.status(400).json({ error: 'Email or phone number is required to verify your account.' });
+    }
+
+    const donor = await Donor.findOne({ $or: query })
+      .select('+phoneOtp +phoneOtpExpiry +phoneOtpExpires +verificationToken +verificationTokenExpiry');
+
+    if (!donor) {
+      return res.status(404).json({ error: 'Donor profile not found with provided credentials.' });
+    }
+
+    if (donor.isVerified) {
+      const token = jwt.sign(
+        { donorId: donor._id, role: 'donor', email: donor.email },
+        process.env.JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+      return res.json({
+        message: 'Account is already verified.',
+        token,
+        donor: {
+          id: donor._id,
+          name: donor.name,
+          email: donor.email,
+          phone: donor.phone,
+          bloodGroup: donor.bloodGroup,
+          isVerified: true,
+        },
+      });
+    }
+
+    const now = new Date();
+    const otpExpiry = donor.phoneOtpExpiry || donor.phoneOtpExpires;
+    const isOtpMatch =
+      donor.phoneOtp && donor.phoneOtp === cleanCode && otpExpiry && otpExpiry > now;
+    const isTokenMatch =
+      donor.verificationToken &&
+      donor.verificationToken === cleanCode &&
+      donor.verificationTokenExpiry &&
+      donor.verificationTokenExpiry > now;
+
+    if (!isOtpMatch && !isTokenMatch) {
+      return res.status(400).json({
+        error: 'Invalid or expired verification code. Please check your WhatsApp or email, or click Resend Code.',
+      });
+    }
+
+    donor.isVerified = true;
+    if (isOtpMatch) donor.phoneVerified = true;
+    if (isTokenMatch || email) donor.emailVerified = true;
+    donor.phoneOtp = undefined;
+    donor.phoneOtpExpires = undefined;
+    donor.phoneOtpExpiry = undefined;
+    donor.verificationToken = undefined;
+    donor.verificationTokenExpiry = undefined;
+    await donor.save();
+
+    logAudit(
+      { _id: donor._id, role: 'donor', name: donor.name },
+      'donor.account_verified',
+      {
+        entity: 'Donor',
+        entityId: donor._id,
+        summary: `Donor account verified via ${isOtpMatch ? 'Phone/WhatsApp OTP' : 'Email Code'} under NDPA 2023.`,
+      }
+    );
+
+    const token = jwt.sign(
+      { donorId: donor._id, role: 'donor', email: donor.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      message: 'Account successfully verified! Welcome to the Smart Blood Bank network.',
+      token,
+      donor: {
+        id: donor._id,
+        name: donor.name,
+        email: donor.email,
+        phone: donor.phone,
+        bloodGroup: donor.bloodGroup,
+        isVerified: true,
+      },
+    });
+  } catch (err) {
+    console.error('Error verifying code:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== VERIFY EMAIL VIA 1-CLICK LINK ====================
+router.get('/verify-link', async (req, res) => {
+  try {
+    const { token, email } = req.query;
+    if (!token || !email || typeof token !== 'string' || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Invalid verification link parameters.' });
+    }
+
+    const donor = await Donor.findOne({
+      email: email.trim().toLowerCase(),
+      verificationToken: token,
+      verificationTokenExpiry: { $gt: new Date() },
+    }).select('+verificationToken +verificationTokenExpiry');
+
+    if (!donor) {
+      return res.status(400).json({
+        error: 'This verification link is invalid or has expired. Please request a new code.',
+      });
+    }
+
+    donor.isVerified = true;
+    donor.emailVerified = true;
+    donor.verificationToken = undefined;
+    donor.verificationTokenExpiry = undefined;
+    await donor.save();
+
+    logAudit(
+      { _id: donor._id, role: 'donor', name: donor.name },
+      'donor.email_verified_link',
+      {
+        entity: 'Donor',
+        entityId: donor._id,
+        summary: `Donor verified email via secure 1-click confirmation link.`,
+      }
+    );
+
+    const jwtToken = jwt.sign(
+      { donorId: donor._id, role: 'donor', email: donor.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      message: 'Email successfully verified! Your account is active.',
+      token: jwtToken,
+      donor: {
+        id: donor._id,
+        name: donor.name,
+        email: donor.email,
+        phone: donor.phone,
+        bloodGroup: donor.bloodGroup,
+        isVerified: true,
+      },
+    });
+  } catch (err) {
+    console.error('Error in verify-link:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== RESEND VERIFICATION CODE ====================
+router.post('/resend-code', async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+    const query = [];
+    if (email && typeof email === 'string' && email.trim()) {
+      query.push({ email: email.trim().toLowerCase() });
+    }
+    if (phone && typeof phone === 'string' && phone.trim()) {
+      const formatted = formatNigerianPhone(phone);
+      if (formatted) query.push({ phone: formatted });
+    }
+
+    if (query.length === 0) {
+      return res.status(400).json({ error: 'Email or phone required to resend verification code.' });
+    }
+
+    const donor = await Donor.findOne({ $or: query });
+    if (!donor) {
+      return res.status(404).json({ error: 'Donor account not found.' });
+    }
+
+    if (donor.isVerified) {
+      return res.status(400).json({ error: 'This account is already verified. Please log in.' });
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const emailToken = crypto.randomBytes(32).toString('hex');
+    const now = Date.now();
+
+    donor.phoneOtp = otpCode;
+    donor.phoneOtpExpires = new Date(now + 15 * 60 * 1000); // 15 mins
+    donor.phoneOtpExpiry = donor.phoneOtpExpires;
+    donor.verificationToken = emailToken;
+    donor.verificationTokenExpiry = new Date(now + 24 * 60 * 60 * 1000); // 24 hours
+    await donor.save();
+
+    if (donor.email) {
+      const verifyUrl = `${APP_URL}/donor/verify?token=${emailToken}&email=${encodeURIComponent(donor.email)}`;
+      const emailContent = buildDonorVerificationEmail({ name: donor.name, verifyUrl, otpCode });
+      sendEmail(donor.email, emailContent.subject, emailContent.text, emailContent.html).catch((err) =>
+        console.warn('Resend verification email failed:', err.message)
+      );
+    }
+
+    if (donor.phone) {
+      sendDonorVerificationOtp(donor.phone, otpCode).catch((err) =>
+        console.warn('Resend verification WhatsApp OTP failed:', err.message)
+      );
+    }
+
+    res.json({ message: 'Verification code resent successfully to your WhatsApp/SMS and email.' });
+  } catch (err) {
+    console.error('Error resending verification code:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

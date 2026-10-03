@@ -100,7 +100,14 @@ const donorSchema = new mongoose.Schema({
     enum: ["local", "google", "facebook"],
     default: "local",
   },
+  isVerified: { type: Boolean, default: false },
   emailVerified: { type: Boolean, default: false },
+  phoneVerified: { type: Boolean, default: false },
+  verificationToken: { type: String, select: false },
+  verificationTokenExpiry: { type: Date, select: false },
+  phoneOtp: { type: String, select: false },
+  phoneOtpExpiry: { type: Date, select: false },
+  phoneOtpExpires: { type: Date, select: false },
   // NDPA 2023 Compliance Fields
   consentTimestamp: { type: Date, default: Date.now },
   consentVersion: { type: String, default: 'NDPA-2023-v1.0' },
@@ -113,6 +120,7 @@ const donorSchema = new mongoose.Schema({
 });
 
 donorSchema.index({ location: "2dsphere" });
+donorSchema.index({ isVerified: 1 });
 
 // Async/await pre-save hook – no 'next' parameter
 donorSchema.pre("save", async function () {

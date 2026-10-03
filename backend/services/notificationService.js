@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const twilio = require('twilio');
 const nodemailer = require('nodemailer');
 const { normalizePhone } = require('../utils/phone');
@@ -44,18 +45,24 @@ const DKIM_DOMAIN = process.env.DKIM_DOMAIN || '';
 const DKIM_SELECTOR = process.env.DKIM_SELECTOR || '';
 const DKIM_PRIVATE_KEY = (process.env.DKIM_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
+const isGmail = process.env.SMTP_SERVICE === 'gmail' || (SMTP_HOST && SMTP_HOST.toLowerCase().includes('gmail'));
 const EMAIL_ENABLED =
-  process.env.EMAIL_ENABLED !== 'false' && Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
+  process.env.EMAIL_ENABLED !== 'false' && Boolean((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS);
 
 let mailer = null;
 if (EMAIL_ENABLED) {
   try {
-    const transport = {
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465, // implicit TLS on 465, STARTTLS otherwise
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    };
+    const transport = isGmail
+      ? {
+          service: 'gmail',
+          auth: { user: SMTP_USER, pass: SMTP_PASS },
+        }
+      : {
+          host: SMTP_HOST,
+          port: SMTP_PORT,
+          secure: SMTP_PORT === 465, // implicit TLS on 465, STARTTLS otherwise
+          auth: { user: SMTP_USER, pass: SMTP_PASS },
+        };
     if (DKIM_DOMAIN && DKIM_SELECTOR && DKIM_PRIVATE_KEY) {
       transport.dkim = {
         domainName: DKIM_DOMAIN,
@@ -165,10 +172,11 @@ const esc = (s = '') =>
  * @param {string} opts.heading  Big title line.
  * @param {string} opts.emoji    Leading emoji for the heading badge.
  * @param {string[]} opts.paragraphs  Body paragraphs (plain text; escaped).
+ * @param {string} [opts.rawHtml] Optional raw HTML block to insert in the email body (e.g. styled code box).
  * @param {{label:string,url:string}} [opts.cta]  Optional call-to-action button.
  * @param {string} [opts.accent]  Accent color for the header bar (defaults to brand red).
  */
-function renderEmail({ heading, emoji = '🩸', paragraphs = [], cta, accent = BRAND.red }) {
+function renderEmail({ heading, emoji = '🩸', paragraphs = [], rawHtml = '', cta, accent = BRAND.red }) {
   const body = paragraphs
     .map(
       (p) =>
@@ -197,6 +205,7 @@ function renderEmail({ heading, emoji = '🩸', paragraphs = [], cta, accent = B
         <tr><td style="padding:28px;">
           <h1 style="margin:0 0 18px;font-size:20px;line-height:1.3;color:${BRAND.dark};">${esc(heading)}</h1>
           ${body}
+          ${rawHtml}
           ${button}
         </td></tr>
         <tr><td style="padding:18px 28px;border-top:1px solid #f0f0f0;">
@@ -393,6 +402,53 @@ For security, set or reset your password after your first sign-in.`;
   return { subject: 'Your Smart Blood Bank account', text, html };
 }
 
+function buildDonorVerificationEmail({ name, verifyUrl, otpCode }) {
+  const greeting = name ? `Hi ${name},` : 'Hello,';
+  const text = `${greeting}
+
+Welcome to Smart Blood Bank! To activate your voluntary donor account and ensure you can receive critical emergency SOS alerts, please verify your email and identity.
+
+Your 6-digit verification code is: ${otpCode}
+(This code is valid for 15 minutes).
+
+Or click this link to instantly verify:
+${verifyUrl}
+
+Under NDPA 2023, identity verification protects the donor registry and ensures emergency alerts reach real people.`;
+
+  const codeBoxHtml = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
+      <tr>
+        <td align="center" style="background:#fef2f2;border:2px dashed #fca5a5;border-radius:12px;padding:18px 24px;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#991b1b;margin-bottom:8px;">Your 6-Digit Verification Code</div>
+          <div style="font-size:32px;font-weight:800;letter-spacing:8px;color:#c2283b;font-family:monospace;margin:4px 0;">${esc(otpCode)}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:6px;">Valid for 15 minutes</div>
+        </td>
+      </tr>
+    </table>`;
+
+  const html = renderEmail({
+    emoji: '🩸',
+    heading: 'Verify your donor account',
+    paragraphs: [
+      greeting,
+      'Thank you for signing up to become a voluntary blood donor on Smart Blood Bank. Verifying your identity protects the clinical integrity of our network and ensures critical SOS alerts reach you.',
+      'You can enter this 6-digit code on the verification screen within 15 minutes, or simply click the button below for 1-click confirmation.',
+    ],
+    rawHtml: codeBoxHtml,
+    cta: { label: 'Verify my account', url: verifyUrl },
+  });
+
+  return { subject: `🩸 ${otpCode} is your Smart Blood Bank verification code`, text, html };
+}
+
+async function sendDonorVerificationOtp(phone, otpCode) {
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone) return { sent: false, reason: 'no-phone' };
+  const body = `🩸 *Smart Blood Bank Donor Verification*\n\nHello! Your account activation code is:\n\n👉 *${otpCode}*\n\n_Valid for 15 minutes. Enter this code to verify your phone number and activate your lifesaving donor profile._\n\n🛡️ _Protected under NDPA 2023. Do not share this code._`;
+  return sendWhatsApp(cleanPhone, body);
+}
+
 // ---- High-level helpers (fire-and-forget friendly; send both channels) ----
 
 async function notifyRequestStatus(request) {
@@ -523,5 +579,7 @@ module.exports = {
   buildPasswordResetEmail,
   buildSosAlertEmail,
   buildDonorSosEmail,
+  buildDonorVerificationEmail,
+  sendDonorVerificationOtp,
   renderEmail,
 };
