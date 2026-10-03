@@ -23,8 +23,23 @@ const app = express();
 // Twilio webhook signature validation and accurate rate limiting.
 app.set('trust proxy', 1);
 
-// Security headers
-app.use(helmet());
+// Security headers with permissive CSP for visual admin tools (like /api/whatsapp/qr)
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'", '*'],
+      },
+    },
+  })
+);
+
+// Silently handle browser favicon requests
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // CORS: restrict to configured frontend origin(s).
 // FRONTEND_ORIGINS is a comma-separated list; falls back to localhost dev.

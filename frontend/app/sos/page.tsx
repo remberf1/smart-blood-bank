@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Siren, ArrowLeft, MapPin, CheckCircle2, Phone, ShieldCheck, Ambulance, Stethoscope } from 'lucide-react';
+import { Siren, ArrowLeft, MapPin, CheckCircle2, Phone, ShieldCheck, Ambulance, Stethoscope, Search, MessageSquare } from 'lucide-react';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
@@ -142,11 +142,20 @@ export default function SosPage() {
                       Ref: {result.referenceId}
                     </div>
                   )}
-                  <p className="text-gray-600 text-sm">
-                    <strong>{result.donorsAlerted}</strong> compatible voluntary donor(s) within{' '}
-                    <strong>{result.radiusKm}km</strong> have been alerted
-                    {result.widened ? ' (search radius widened)' : ''}. The hospital blood bank has also been put on standby.
-                  </p>
+                  {result.donorsAlerted > 0 ? (
+                    <p className="text-gray-600 text-sm">
+                      <strong>{result.donorsAlerted}</strong> compatible voluntary donor(s) within{' '}
+                      <strong>{result.radiusKm}km</strong> have been alerted
+                      {result.widened ? ' (search radius widened)' : ''}. The hospital blood bank has also been put on standby.
+                    </p>
+                  ) : (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 text-left">
+                      <strong>⚠️ No immediate voluntary donors within {result.radiusKm}km:</strong>
+                      <p className="mt-0.5 text-amber-800">
+                        The emergency broadcast has been elevated directly to nearby hospital blood banks and ambulance triage. Please call the emergency hospital blood bank below immediately.
+                      </p>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -209,10 +218,27 @@ export default function SosPage() {
               )}
 
               <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
-                <Link href="/request">
-                  <Button variant="outline" className="w-full sm:w-auto">Submit Standard Blood Request</Button>
-                </Link>
-                <Button variant="ghost" onClick={() => setResult(null)} className="w-full sm:w-auto">
+                {result.referenceId && (
+                  <Link href={`/track?query=${encodeURIComponent(result.referenceId)}&verifyPhone=${encodeURIComponent(phone)}`}>
+                    <Button className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-semibold shadow-xs">
+                      <Search className="h-4 w-4 mr-1.5" /> Track this Request
+                    </Button>
+                  </Link>
+                )}
+                {result.referenceId && (
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(
+                      `🚨 Emergency Blood SOS (${result.referenceId}): We urgently need ${bloodGroup} blood at ${result.nearestHospital?.name || 'the emergency blood bank'}. Track live status: ${typeof window !== 'undefined' ? window.location.origin : ''}/track?query=${result.referenceId}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Button variant="outline" className="w-full sm:w-auto border-emerald-300 text-emerald-800 hover:bg-emerald-50 font-medium">
+                      <MessageSquare className="h-4 w-4 mr-1.5 text-emerald-600" /> Share via WhatsApp
+                    </Button>
+                  </a>
+                )}
+                <Button variant="ghost" onClick={() => setResult(null)} className="w-full sm:w-auto text-xs text-gray-500">
                   Raise another alert
                 </Button>
               </div>

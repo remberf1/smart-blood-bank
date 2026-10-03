@@ -1,4 +1,4 @@
-const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion, jidNormalizedUser } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion, jidNormalizedUser, Browsers } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const QRCode = require('qrcode');
 const { useMongoAuthState } = require('./mongoAuthState');
@@ -22,14 +22,14 @@ async function initBaileys() {
 
   try {
     const { state, saveCreds, clearSession } = await useMongoAuthState('primary');
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1017531234] }));
 
     sock = makeWASocket({
       version,
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: ['Smart Blood Bank', 'Chrome', '1.0.0'],
+      browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false,
     });
 
@@ -207,9 +207,50 @@ function getQrDataUrl() {
   return qrDataUrl;
 }
 
+/**
+ * Resets MongoDB stored credentials, cancels reconnect timers,
+ * destroys the existing socket connection, and triggers a fresh pairing sequence.
+ */
+async function resetSession() {
+  console.log('🔄 [Baileys] Manual session reset requested...');
+  clearTimeout(reconnectTimer);
+  rawQr = null;
+  qrDataUrl = null;
+  connectionStatus = 'disconnected';
+  connectedUser = null;
+
+  if (sock) {
+    try {
+      sock.ev.removeAllListeners('connection.update');
+      sock.ev.removeAllListeners('creds.update');
+      sock.ev.removeAllListeners('messages.upsert');
+      sock.end();
+    } catch (e) {
+      // ignore
+    }
+    sock = null;
+  }
+
+  try {
+    const { clearSession } = await useMongoAuthState('primary');
+    await clearSession();
+    console.log('🗑️ [Baileys] MongoDB session keys cleared successfully.');
+  } catch (err) {
+    console.error('Failed to clear MongoDB session keys:', err.message);
+  }
+
+  isInitializing = false;
+  setTimeout(() => {
+    initBaileys();
+  }, 400);
+
+  return { ok: true, message: 'Session reset and reconnect initiated' };
+}
+
 module.exports = {
   initBaileys,
   sendMessage,
   getStatus,
   getQrDataUrl,
+  resetSession,
 };

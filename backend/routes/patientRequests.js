@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const PatientRequest = require("../models/PatientRequest");
+const SOSRequest = require("../models/SOSRequest");
 const Inventory = require("../models/Inventory");
 const { allocateBlood, allocateOxygen } = require("../services/allocationService");
 const { consumeForDelivery } = require("../services/inventoryService");
@@ -90,47 +91,139 @@ router.post("/", validate(patientRequestSchema), async (req, res) => {
   }
 });
 
-// Track requests by phone number or reference ID (for patients/families).
-// Matches on SBB- referenceId, last 10 digits for phone, or hex reference for ID.
+// Helper to format SOS request for public tracking (sanitizes sensitive data)
+function formatSosForTracking(sos) {
+  return {
+    _id: sos._id,
+    type: 'sos',
+    referenceId: sos.referenceId || `SOS-${sos._id.toString().slice(-6).toUpperCase()}`,
+    tier: sos.tier,
+    bloodGroup: sos.bloodGroup,
+    componentNeeded: sos.componentNeeded || 'WHOLE_BLOOD',
+    radiusKm: sos.radiusKm,
+    status: sos.status,
+    hospitalTriageStatus: sos.hospitalTriageStatus,
+    hospitalName: sos.hospitalName || 'Emergency Referral Hospital',
+    doctorName: sos.doctorName,
+    doctorPhone: sos.doctorPhone ? sos.doctorPhone.slice(-4).padStart(sos.doctorPhone.length, '*') : undefined,
+    userPhoneMasked: sos.userPhone ? sos.userPhone.slice(-4).padStart(sos.userPhone.length, '*') : undefined,
+    userLocation: sos.userLocation,
+    donorsAlertedCount: sos.donorsAlerted ? sos.donorsAlerted.length : 0,
+    donorsAvailableCount: sos.donorsResponded ? sos.donorsResponded.filter((r) => r.response === 'yes').length : 0,
+    donorsDeclinedCount: sos.donorsResponded ? sos.donorsResponded.filter((r) => r.response === 'no').length : 0,
+    createdAt: sos.createdAt,
+  };
+}
+
+// Track requests by phone number or reference ID (supports both SBB- requisitions & SOS- emergency alerts).
 router.get("/track/:query", async (req, res) => {
   try {
     const raw = String(req.params.query || "").trim();
     const digits = raw.replace(/\D/g, "");
-
     const mongoose = require('mongoose');
 
-    // 1. Direct match by referenceId (e.g., SBB-4A7F2)
-    const byRef = await PatientRequest.find({ referenceId: new RegExp('^' + raw.replace('SBB-', '') + '$|^SBB-' + raw.replace('SBB-', '') + '$', 'i') })
+    // 1. Phone number lookup (matches last 10 digits across BOTH PatientRequest and SOSRequest)
+    if (digits.length >= 10) {
+      const last10 = digits.slice(-10);
+      const [patientReqs, sosReqs] = await Promise.all([
+        PatientRequest.find({ contactPhone: new RegExp(last10 + "$") })
+          .populate("preferredHospitalId", "name address contactPhone location")
+          .populate("allocatedHospitalId", "name address contactPhone location")
+          .sort({ createdAt: -1 }),
+        SOSRequest.find({
+          $or: [
+            { userPhone: new RegExp(last10 + "$") },
+            { doctorPhone: new RegExp(last10 + "$") },
+          ],
+        }).sort({ createdAt: -1 }),
+      ]);
+
+      const formattedSos = sosReqs.map(formatSosForTracking);
+      return res.json([...patientReqs, ...formattedSos]);
+    }
+
+    // 2. Direct match for Emergency SOS by reference ID (e.g. SOS-J41DD or J41DD)
+    const cleanSosRef = raw.replace(/^SOS-/i, '').trim();
+    const isSosFormat = raw.toUpperCase().startsWith('SOS-') || (/^[A-Za-z0-9]{4,8}$/.test(raw) && !raw.toUpperCase().startsWith('SBB-'));
+
+    if (isSosFormat) {
+      const sosMatch = await SOSRequest.findOne({
+        $or: [
+          { referenceId: new RegExp('^' + cleanSosRef + '$|^SOS-' + cleanSosRef + '$', 'i') },
+          ...(raw.length === 24 && mongoose.Types.ObjectId.isValid(raw) ? [{ _id: raw }] : [])
+        ]
+      });
+
+      if (sosMatch) {
+        // Privacy Guardrail: Require matching phone number to access emergency patient tracking
+        const phoneParam = req.query.phone ? String(req.query.phone).replace(/\D/g, "") : "";
+        if (!phoneParam || phoneParam.length < 7) {
+          return res.status(200).json({
+            requiresPhone: true,
+            referenceId: sosMatch.referenceId,
+            type: 'sos',
+            message: "For emergency SOS privacy, please enter the phone number associated with this SOS ID.",
+          });
+        }
+
+        const sosDigits = String(sosMatch.userPhone || sosMatch.doctorPhone || "").replace(/\D/g, "");
+        const match =
+          sosDigits === phoneParam ||
+          (sosDigits.length >= 10 && phoneParam.length >= 10 && sosDigits.slice(-10) === phoneParam.slice(-10)) ||
+          sosDigits.endsWith(phoneParam.slice(-7));
+
+        if (!match) {
+          return res.status(403).json({
+            error: "The phone number entered does not match the emergency contact on file for this SOS ID.",
+          });
+        }
+
+        return res.json([formatSosForTracking(sosMatch)]);
+      }
+    }
+
+    // 3. Direct match for Standard Clinical Requisitions by referenceId (e.g. SBB-4A7F2 or 4A7F2)
+    const cleanSbbRef = raw.replace(/^SBB-/i, '').trim();
+    const byRef = await PatientRequest.find({
+      referenceId: new RegExp('^' + cleanSbbRef + '$|^SBB-' + cleanSbbRef + '$', 'i')
+    })
       .populate("preferredHospitalId", "name address contactPhone location")
       .populate("allocatedHospitalId", "name address contactPhone location");
     if (byRef.length > 0) return res.json(byRef);
 
+    // 4. ObjectId lookup for PatientRequest
     if (mongoose.Types.ObjectId.isValid(raw) && raw.length === 24) {
       const single = await PatientRequest.findById(raw)
         .populate("preferredHospitalId", "name address contactPhone location")
         .populate("allocatedHospitalId", "name address contactPhone location");
-      return res.json(single ? [single] : []);
+      if (single) return res.json([single]);
     }
 
+    // 5. Hex tail lookup
     if (/^[a-fA-F0-9]{4,24}$/.test(raw) && digits.length < 7) {
       const allRecent = await PatientRequest.find().sort({ createdAt: -1 }).limit(100)
         .populate("preferredHospitalId", "name address contactPhone location")
         .populate("allocatedHospitalId", "name address contactPhone location");
-      const matched = allRecent.filter(r => r._id.toString().toLowerCase().endsWith(raw.toLowerCase()) || (r.referenceId && r.referenceId.toLowerCase().includes(raw.toLowerCase())));
-      return res.json(matched);
+      const matched = allRecent.filter(r =>
+        r._id.toString().toLowerCase().endsWith(raw.toLowerCase()) ||
+        (r.referenceId && r.referenceId.toLowerCase().includes(raw.toLowerCase()))
+      );
+      if (matched.length > 0) return res.json(matched);
     }
 
-    const filter =
-      digits.length >= 10
-        ? { contactPhone: new RegExp(digits.slice(-10) + "$") }
-        : { contactPhone: raw };
+    // 6. Direct contactPhone lookup fallback
+    const filter = digits.length >= 7
+      ? { contactPhone: new RegExp(digits.slice(-7) + "$") }
+      : { contactPhone: raw };
     const requests = await PatientRequest.find(filter)
       .populate("preferredHospitalId", "name address contactPhone location")
       .populate("allocatedHospitalId", "name address contactPhone location")
       .sort({ createdAt: -1 });
-    res.json(requests);
+
+    return res.json(requests);
   } catch (err) {
-    console.error(err); res.status(500).json({ error: 'Internal server error' });
+    console.error("Tracking query error:", err);
+    res.status(500).json({ error: 'Could not complete request lookup. Please check reference ID or phone number.' });
   }
 });
 

@@ -12,7 +12,7 @@ import {
 import { PageHeader } from '@/components/ui/page-header';
 import { Loading, EmptyState } from '@/components/ui/states';
 import { useAuth } from '../../contexts/AuthContext';
-import { Siren, Phone, MapPin, Droplet, CheckCircle2, Users, AlertTriangle, ShieldAlert, Wrench } from 'lucide-react';
+import { Siren, Phone, MapPin, Droplet, CheckCircle2, Users, AlertTriangle, ShieldAlert, Wrench, MessageSquare, Radio } from 'lucide-react';
 
 interface DonorRef { _id?: string; name?: string; phone?: string; bloodGroup?: string }
 interface Alerted { donorId?: DonorRef | string; phone: string; status: string }
@@ -76,6 +76,21 @@ export default function SosPage() {
   const [clinicalConfirmOpen, setClinicalConfirmOpen] = useState(false);
   const [selectedSosForBroadcast, setSelectedSosForBroadcast] = useState<Sos | null>(null);
   const [confirmingBroadcast, setConfirmingBroadcast] = useState(false);
+  const [expandingRadius, setExpandingRadius] = useState(false);
+
+  const handleExpandBroadcast = async (id: string, radiusKm = 300) => {
+    setExpandingRadius(true);
+    try {
+      const res = await apiClient.post(`/sos/${id}/expand-broadcast`, { radiusKm });
+      toast.success(`Search radius expanded to ${res.data.radiusKm}km! Alerted ${res.data.newlyAlerted} additional donors.`);
+      openDetail(id);
+      fetchList();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to expand search radius');
+    } finally {
+      setExpandingRadius(false);
+    }
+  };
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -385,6 +400,35 @@ export default function SosPage() {
                 </div>
               </div>
 
+              {/* Quick Contact Bar */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 pb-1 border-t border-border">
+                {detail.userPhone && (
+                  <>
+                    <a href={`tel:${detail.userPhone}`}>
+                      <Button size="sm" variant="outline" className="h-8 text-xs font-semibold">
+                        <Phone className="h-3.5 w-3.5 mr-1 text-primary" /> Call Requester
+                      </Button>
+                    </a>
+                    <a
+                      href={`https://wa.me/${detail.userPhone.replace(/\D/g, '')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <Button size="sm" variant="outline" className="h-8 text-xs font-semibold text-emerald-700 border-emerald-300 hover:bg-emerald-50">
+                        <MessageSquare className="h-3.5 w-3.5 mr-1 text-emerald-600" /> WhatsApp Requester
+                      </Button>
+                    </a>
+                  </>
+                )}
+                {detail.doctorPhone && (
+                  <a href={`tel:${detail.doctorPhone}`}>
+                    <Button size="sm" variant="outline" className="h-8 text-xs font-semibold text-blue-700 border-blue-200 hover:bg-blue-50">
+                      <Phone className="h-3.5 w-3.5 mr-1 text-blue-600" /> Call Physician
+                    </Button>
+                  </a>
+                )}
+              </div>
+
               <div>
                 <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" /> Responded
@@ -424,9 +468,21 @@ export default function SosPage() {
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="gap-2 flex-wrap">
             {detail?.status === 'pending' && (
               <>
+                {!isSuperadmin && (
+                  <Button
+                    variant="outline"
+                    disabled={expandingRadius || busyId === detail._id}
+                    onClick={() => handleExpandBroadcast(detail._id, 300)}
+                    className="text-red-700 border-red-200 hover:bg-red-50 text-xs font-semibold"
+                    title="Force expand search radius to 300km to mobilize regional donors"
+                  >
+                    <Radio className="h-3.5 w-3.5 mr-1 text-red-600 animate-pulse" />
+                    {expandingRadius ? 'Expanding…' : 'Force Expand Radius (300km)'}
+                  </Button>
+                )}
                 <Button variant="outline" disabled={busyId === detail._id} onClick={() => setSosStatus(detail._id, 'expired')}>
                   Mark expired
                 </Button>

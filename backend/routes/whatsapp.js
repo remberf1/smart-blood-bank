@@ -174,6 +174,37 @@ router.get('/qr', (req, res) => {
       margin: 24px auto;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .reset-container {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .btn-reset {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      color: #475569;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-reset:hover {
+      background: #fee2e2;
+      color: #b91c1c;
+      border-color: #fca5a5;
+    }
+    .reset-hint {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
   </style>
   <script>
     const isInitiallyConnected = ${JSON.stringify(status.connected)};
@@ -194,9 +225,36 @@ router.get('/qr', (req, res) => {
   <div class="card">
     <div class="brand">🩸 SMART BLOOD BANK</div>
     ${bodyContent}
+    <div class="reset-container">
+      <form action="/api/whatsapp/reset" method="POST" style="margin: 0;">
+        <button type="submit" class="btn-reset" onclick="this.disabled=true; this.innerText='Resetting...'; this.form.submit();">
+          🔄 Reset Session &amp; Fresh QR
+        </button>
+      </form>
+      <div class="reset-hint">
+        If WhatsApp showed <em>"Couldn't link device"</em>, click to clear stale pairing keys and retry.
+      </div>
+    </div>
   </div>
 </body>
 </html>`);
+});
+
+/**
+ * ALL /api/whatsapp/reset
+ * Cleans MongoDB credentials and restarts Baileys socket for a clean pairing.
+ */
+router.all('/reset', async (req, res) => {
+  try {
+    await baileysService.resetSession();
+    if (req.headers['content-type']?.includes('application/json')) {
+      return res.json({ success: true, message: 'Session reset initiated' });
+    }
+    return res.redirect('/api/whatsapp/qr');
+  } catch (err) {
+    console.error('Failed to reset Baileys session:', err);
+    res.status(500).json({ error: 'Failed to reset session: ' + err.message });
+  }
 });
 
 /**

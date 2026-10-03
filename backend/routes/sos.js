@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const SOSRequest = require('../models/SOSRequest');
 const { auth, isAdmin } = require('../middleware/auth');
 const { allowRoles } = require('../middleware/roles');
-const { triggerSOS, verifyAndBroadcastSOS } = require('../services/sosService');
+const { triggerSOS, verifyAndBroadcastSOS, expandAndBroadcastSOS } = require('../services/sosService');
 const { formatNigerianPhone } = require('../utils/phone');
 const { logAudit } = require('../services/auditService');
 
@@ -108,6 +108,34 @@ router.post('/:id/verify-broadcast', auth, async (req, res) => {
   } catch (err) {
     console.error('Verify and broadcast error:', err);
     res.status(400).json({ error: err.message || 'Failed to verify and broadcast SOS' });
+  }
+});
+
+// Force Expand Search Radius for active SOS (Hospital Clinical Staff / Admins only)
+router.post('/:id/expand-broadcast', auth, async (req, res) => {
+  try {
+    if (req.user.role === 'superadmin') {
+      return res.status(403).json({
+        error: 'Separation of Duties violation: Platform Super Admin (IT Plane) cannot expand emergency donor broadcasts. Must be initiated by hospital clinical staff.',
+      });
+    }
+
+    if (!['admin', 'staff'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied: Hospital clinical role required.' });
+    }
+
+    const { radiusKm } = req.body || {};
+    const result = await expandAndBroadcastSOS(req.params.id, radiusKm ? Number(radiusKm) : 300);
+    logAudit(req.user, 'sos.clinical_expand_broadcast', {
+      entity: 'SOSRequest',
+      entityId: req.params.id,
+      summary: `Clinically expanded SOS search radius to ${result.radiusKm}km by ${req.user.name}`,
+      metadata: result,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('Expand and broadcast error:', err);
+    res.status(400).json({ error: err.message || 'Failed to expand and broadcast SOS' });
   }
 });
 

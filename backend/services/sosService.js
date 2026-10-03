@@ -222,35 +222,65 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
   // ==============================================================
   const compatibleGroups = getCompatibleDonors(bloodGroup);
   const targetGroups = compatibleGroups.length ? compatibleGroups : [bloodGroup];
-  const donors = await Donor.find({
+
+  // Eligible donors:
+  // - Verified account (or legacy unverified flag !== false)
+  // - Blood group matches target groups (either lab-verified or self-reported)
+  // - Not medically deferred or permanently ineligible
+  // - SOS alerts enabled (sosOptIn !== false)
+  // - Active (not soft-deleted)
+  const candidateDonors = await Donor.find({
     isVerified: { $ne: false },
+    isDeleted: { $ne: true },
     $or: [
-      { bloodGroupVerified: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
-      { bloodGroup: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
+      { bloodGroupVerified: { $in: targetGroups } },
+      { bloodGroup: { $in: targetGroups } },
     ],
-    eligibilityStatus: 'eligible',
-    sosOptIn: true,
+    eligibilityStatus: { $nin: ['deferred', 'ineligible'] },
+    sosOptIn: { $ne: false },
   });
 
-  const withDistance = donors
-    .map(donor => ({
-      ...donor.toObject(),
-      distance: haversineDistance(
-        userLat, userLon,
-        donor.location.coordinates[1],
-        donor.location.coordinates[0]
-      ),
-    }))
+  // Filter out any donor who donated within the mandatory deferral window (90 days)
+  const now = Date.now();
+  const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+  const eligibleDonors = candidateDonors.filter((d) => {
+    if (d.lastDonationDate) {
+      const elapsed = now - new Date(d.lastDonationDate).getTime();
+      if (elapsed < ninetyDaysMs) return false;
+    }
+    return true;
+  });
+
+  const withDistance = eligibleDonors
+    .map((donor) => {
+      const coords = donor.location?.coordinates;
+      const hasCoords = Array.isArray(coords) && coords.length >= 2 && !isNaN(coords[0]) && !isNaN(coords[1]);
+      const distance =
+        hasCoords && userLat != null && userLon != null
+          ? haversineDistance(userLat, userLon, coords[1], coords[0])
+          : 999;
+      return {
+        ...donor.toObject(),
+        distance,
+        hasCoords,
+      };
+    })
     .sort((a, b) => a.distance - b.distance);
 
-  const tiers = Array.from(new Set([radiusKm, 50, 150].filter((r) => r >= radiusKm)))
-    .sort((a, b) => a - b);
+  // Progressive search tiers: initial (e.g. 15km), then 50km, then 150km, then 300km
+  const tiers = Array.from(new Set([radiusKm, 50, 150, 300].filter((r) => r >= radiusKm))).sort((a, b) => a - b);
   let effectiveRadius = radiusKm;
   let donorsWithDistance = [];
   for (const r of tiers) {
     effectiveRadius = r;
     donorsWithDistance = withDistance.filter((d) => d.distance <= r);
     if (donorsWithDistance.length > 0) break;
+  }
+
+  // If still 0 donors within 300km, fallback to alerting all compatible donors registered in the platform
+  if (donorsWithDistance.length === 0 && withDistance.length > 0) {
+    effectiveRadius = 300;
+    donorsWithDistance = withDistance.slice(0, 20); // Top 20 available voluntary donors
   }
 
   console.log(`📍 Found ${donorsWithDistance.length} eligible donors within ${effectiveRadius}km`);
@@ -347,32 +377,55 @@ async function verifyAndBroadcastSOS(sosId, user) {
   const compatibleGroups = getCompatibleDonors(sos.bloodGroup);
   const targetGroups = compatibleGroups.length ? compatibleGroups : [sos.bloodGroup];
 
-  const donors = await Donor.find({
+  const candidateDonors = await Donor.find({
     isVerified: { $ne: false },
+    isDeleted: { $ne: true },
     $or: [
-      { bloodGroupVerified: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
-      { bloodGroup: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
+      { bloodGroupVerified: { $in: targetGroups } },
+      { bloodGroup: { $in: targetGroups } },
     ],
-    eligibilityStatus: 'eligible',
-    sosOptIn: true,
+    eligibilityStatus: { $nin: ['deferred', 'ineligible'] },
+    sosOptIn: { $ne: false },
   });
 
-  const withDistance = donors
-    .map(donor => ({
-      ...donor.toObject(),
-      distance: userLat != null && userLon != null
-        ? haversineDistance(userLat, userLon, donor.location.coordinates[1], donor.location.coordinates[0])
-        : 0,
-    }))
+  const now = Date.now();
+  const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+  const eligibleDonors = candidateDonors.filter((d) => {
+    if (d.lastDonationDate) {
+      const elapsed = now - new Date(d.lastDonationDate).getTime();
+      if (elapsed < ninetyDaysMs) return false;
+    }
+    return true;
+  });
+
+  const withDistance = eligibleDonors
+    .map((donor) => {
+      const coords = donor.location?.coordinates;
+      const hasCoords = Array.isArray(coords) && coords.length >= 2 && !isNaN(coords[0]) && !isNaN(coords[1]);
+      const distance =
+        hasCoords && userLat != null && userLon != null
+          ? haversineDistance(userLat, userLon, coords[1], coords[0])
+          : 999;
+      return {
+        ...donor.toObject(),
+        distance,
+        hasCoords,
+      };
+    })
     .sort((a, b) => a.distance - b.distance);
 
-  const tiers = Array.from(new Set([radiusKm, 50, 150].filter((r) => r >= radiusKm))).sort((a, b) => a - b);
+  const tiers = Array.from(new Set([radiusKm, 50, 150, 300].filter((r) => r >= radiusKm))).sort((a, b) => a - b);
   let effectiveRadius = radiusKm;
   let donorsWithDistance = [];
   for (const r of tiers) {
     effectiveRadius = r;
     donorsWithDistance = withDistance.filter((d) => d.distance <= r);
     if (donorsWithDistance.length > 0) break;
+  }
+
+  if (donorsWithDistance.length === 0 && withDistance.length > 0) {
+    effectiveRadius = 300;
+    donorsWithDistance = withDistance.slice(0, 20);
   }
 
   let alertedCount = 0;
@@ -463,4 +516,102 @@ async function processDonorResponse(donorPhone, response) {
   return { success: true, message: `Thank you for your honesty, ${donor.name}.` };
 }
 
-module.exports = { triggerSOS, verifyAndBroadcastSOS, processDonorResponse };
+async function expandAndBroadcastSOS(sosId, requestedRadiusKm = 300) {
+  const sos = await SOSRequest.findById(sosId);
+  if (!sos) throw new Error('SOS request not found');
+
+  const userLat = sos.userLocation?.lat;
+  const userLon = sos.userLocation?.lon;
+  const compatibleGroups = getCompatibleDonors(sos.bloodGroup);
+  const targetGroups = compatibleGroups.length ? compatibleGroups : [sos.bloodGroup];
+
+  const candidateDonors = await Donor.find({
+    isVerified: { $ne: false },
+    isDeleted: { $ne: true },
+    $or: [
+      { bloodGroupVerified: { $in: targetGroups } },
+      { bloodGroup: { $in: targetGroups } },
+    ],
+    eligibilityStatus: { $nin: ['deferred', 'ineligible'] },
+    sosOptIn: { $ne: false },
+  });
+
+  const now = Date.now();
+  const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+  const eligibleDonors = candidateDonors.filter((d) => {
+    if (d.lastDonationDate) {
+      const elapsed = now - new Date(d.lastDonationDate).getTime();
+      if (elapsed < ninetyDaysMs) return false;
+    }
+    return true;
+  });
+
+  const alreadyAlertedIds = new Set(sos.donorsAlerted.map((a) => a.donorId?.toString()));
+
+  const withDistance = eligibleDonors
+    .filter((d) => !alreadyAlertedIds.has(d._id.toString()))
+    .map((donor) => {
+      const coords = donor.location?.coordinates;
+      const hasCoords = Array.isArray(coords) && coords.length >= 2 && !isNaN(coords[0]) && !isNaN(coords[1]);
+      const distance =
+        hasCoords && userLat != null && userLon != null
+          ? haversineDistance(userLat, userLon, coords[1], coords[0])
+          : 999;
+      return {
+        ...donor.toObject(),
+        distance,
+        hasCoords,
+      };
+    })
+    .sort((a, b) => a.distance - b.distance);
+
+  const targetRadius = Math.max(requestedRadiusKm, (sos.radiusKm || 15) * 2, 100);
+  let donorsToAlert = withDistance.filter((d) => d.distance <= targetRadius);
+  if (donorsToAlert.length === 0 && withDistance.length > 0) {
+    donorsToAlert = withDistance.slice(0, 25);
+  }
+
+  let newlyAlertedCount = 0;
+  for (const donor of donorsToAlert) {
+    const donorPhone = normalizePhone(donor.phone);
+    try {
+      const body = `🚨 *EXPANDED CLINICAL SOS - URGENT BLOOD DONATION* 🚨\n\nA verified patient urgently needs *${sos.bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Expanded Search Distance: ${donor.distance.toFixed(1)}km\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`;
+      const dispatchResult = await dispatchWhatsAppMessage(donorPhone, body);
+      if (dispatchResult.sent) {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
+        newlyAlertedCount++;
+      } else {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+      }
+      if (donor.email) {
+        const emailData = buildDonorSosEmail({
+          donorName: donor.name,
+          donorGroup: donor.bloodGroup,
+          bloodGroup: sos.bloodGroup,
+          distanceKm: donor.distance,
+          lat: userLat,
+          lon: userLon,
+        });
+        sendEmail(donor.email, emailData.subject, emailData.text, emailData.html).catch(() => {});
+      }
+      await Donor.updateOne({ _id: donor._id }, { $inc: { sosAlertCount: 1 }, $set: { lastSosAlert: new Date() } });
+    } catch (err) {
+      sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+    }
+  }
+
+  sos.radiusKm = targetRadius;
+  if (sos.hospitalTriageStatus === 'pending_verification') {
+    sos.hospitalTriageStatus = 'verified_broadcasted';
+  }
+  await sos.save();
+
+  return {
+    sosId: sos._id,
+    radiusKm: targetRadius,
+    newlyAlerted: newlyAlertedCount,
+    totalAlerted: sos.donorsAlerted.length,
+  };
+}
+
+module.exports = { triggerSOS, verifyAndBroadcastSOS, expandAndBroadcastSOS, processDonorResponse };
