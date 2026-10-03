@@ -13,6 +13,11 @@ const donationAppointmentSchema = new mongoose.Schema({
     enum: ['morning', 'afternoon', 'flexible'],
     default: 'morning',
   },
+  donationType: {
+    type: String,
+    enum: ['WHOLE_BLOOD', 'PLATELET_APHERESIS', 'PLASMA_APHERESIS'],
+    default: 'WHOLE_BLOOD',
+  },
   donorNinMasked: { type: String },
   // 'pending' = donor offered to donate, awaiting hospital confirmation and time assignment
   // 'scheduled' = confirmed with date & time by the hospital admin

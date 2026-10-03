@@ -25,6 +25,8 @@ const hospitalSchema = new mongoose.Schema({
   },
   dailyDonationCapacity: { type: Number, default: 10 }, // Maximum donors phlebotomy team can handle per day
   hourlyDonationCapacity: { type: Number, default: 2 }, // Maximum donors per hour / time slot
+  isActive: { type: Boolean, default: true },
+  deactivatedAt: { type: Date },
   createdAt: { type: Date, default: Date.now }
 });
 

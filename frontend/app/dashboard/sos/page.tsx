@@ -11,14 +11,23 @@ import {
 } from '@/components/ui/dialog';
 import { PageHeader } from '@/components/ui/page-header';
 import { Loading, EmptyState } from '@/components/ui/states';
-import { Siren, Phone, MapPin, Droplet, CheckCircle2, Users } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { Siren, Phone, MapPin, Droplet, CheckCircle2, Users, AlertTriangle, ShieldAlert, Wrench } from 'lucide-react';
 
 interface DonorRef { _id?: string; name?: string; phone?: string; bloodGroup?: string }
 interface Alerted { donorId?: DonorRef | string; phone: string; status: string }
 interface Responded { donorId?: DonorRef | string; response: string; timestamp: string }
 interface Sos {
   _id: string;
+  referenceId?: string;
+  tier?: 'clinical' | 'public';
+  authCode?: string;
+  hospitalTriageStatus?: string;
   bloodGroup: string;
+  doctorName?: string;
+  doctorPhone?: string;
+  hospitalName?: string;
+  componentNeeded?: string;
   userLocation?: { lat: number; lon: number };
   userPhone?: string;
   radiusKm: number;
@@ -36,16 +45,37 @@ const statusBadge = (s: string) => {
   return <Badge className="bg-muted text-muted-foreground">Expired</Badge>;
 };
 
+const tierBadge = (tier?: string) => {
+  if (tier === 'clinical') {
+    return <span className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">🩺 Clinical (Verified)</span>;
+  }
+  return <span className="text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">📢 Public Bystander</span>;
+};
+
 const donorName = (d?: DonorRef | string) =>
   d && typeof d === 'object' ? d.name || d.phone || 'Donor' : 'Donor';
 
 export default function SosPage() {
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === 'superadmin';
+
   const [items, setItems] = useState<Sos[]>([]);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<Sos | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Technical Force-Resolve state (Super Admin IT Override)
+  const [forceResolveOpen, setForceResolveOpen] = useState(false);
+  const [forceResolveId, setForceResolveId] = useState<string | null>(null);
+  const [forceResolveReason, setForceResolveReason] = useState('');
+  const [forceResolving, setForceResolving] = useState(false);
+
+  // Clinical Authorization state (Hospital Staff / Clinicians)
+  const [clinicalConfirmOpen, setClinicalConfirmOpen] = useState(false);
+  const [selectedSosForBroadcast, setSelectedSosForBroadcast] = useState<Sos | null>(null);
+  const [confirmingBroadcast, setConfirmingBroadcast] = useState(false);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -88,6 +118,56 @@ export default function SosPage() {
       toast.error(err.response?.data?.error || 'Update failed');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const openForceResolve = (id: string) => {
+    setForceResolveId(id);
+    setForceResolveReason('');
+    setForceResolveOpen(true);
+  };
+
+  const handleForceResolve = async () => {
+    if (!forceResolveId) return;
+    if (!forceResolveReason.trim() || forceResolveReason.trim().length < 8) {
+      toast.error('Please enter a detailed technical reason (at least 8 characters).');
+      return;
+    }
+    setForceResolving(true);
+    try {
+      await apiClient.post(`/sos/${forceResolveId}/technical-resolve`, {
+        reason: forceResolveReason.trim(),
+      });
+      toast.success('Technical override applied: SOS ticket force-resolved and logged to audit trail.');
+      setForceResolveOpen(false);
+      setForceResolveId(null);
+      setForceResolveReason('');
+      fetchList();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to force resolve');
+    } finally {
+      setForceResolving(false);
+    }
+  };
+
+  const openClinicalConfirm = (sos: Sos) => {
+    setSelectedSosForBroadcast(sos);
+    setClinicalConfirmOpen(true);
+  };
+
+  const handleConfirmBroadcast = async () => {
+    if (!selectedSosForBroadcast) return;
+    setConfirmingBroadcast(true);
+    try {
+      const res = await apiClient.post(`/sos/${selectedSosForBroadcast._id}/verify-broadcast`);
+      toast.success(`Clinical SOS verified! Broadcasted to ${res.data.donorsAlerted} voluntary donors.`);
+      setClinicalConfirmOpen(false);
+      setSelectedSosForBroadcast(null);
+      fetchList();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to verify and broadcast');
+    } finally {
+      setConfirmingBroadcast(false);
     }
   };
 
@@ -160,26 +240,51 @@ export default function SosPage() {
               ) : items.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8}>
-                    <EmptyState icon={Siren} title={`No SOS requests${status ? ` (${status === 'pending' ? 'active' : status})` : ''}`} hint="Emergencies raised by patients via WhatsApp will appear here." />
+                    <EmptyState icon={Siren} title={`No SOS requests${status ? ` (${status === 'pending' ? 'active' : status})` : ''}`} hint="Emergencies broadcast by doctors via WhatsApp (Option 4) or patients via emergency portal will appear here." />
                   </TableCell>
                 </TableRow>
               ) : (
                 items.map((s) => (
                   <TableRow key={s._id} className="hover:bg-muted/50">
                     <TableCell>
-                      <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-                        <Droplet className="h-3 w-3 mr-1" />{s.bloodGroup}
-                      </Badge>
+                      <div className="flex flex-col gap-1 items-start">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 w-fit">
+                            <Droplet className="h-3 w-3 mr-1" />{s.bloodGroup}
+                          </Badge>
+                          {tierBadge(s.tier)}
+                        </div>
+                        {s.referenceId && (
+                          <span className="text-[11px] font-mono text-muted-foreground">{s.referenceId}</span>
+                        )}
+                        {s.authCode && (
+                          <span className="text-[10px] font-mono bg-emerald-50 text-emerald-800 px-1 rounded">Auth: {s.authCode}</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {s.userPhone ? (
-                        <a href={`tel:${s.userPhone}`} className="text-primary hover:underline flex items-center gap-1">
-                          <Phone className="h-3 w-3" />{s.userPhone}
-                        </a>
-                      ) : <span className="text-muted-foreground">—</span>}
+                      <div>
+                        {s.doctorName && (
+                          <p className="font-medium text-foreground">{s.doctorName}</p>
+                        )}
+                        {s.hospitalName && (
+                          <p className="text-xs text-muted-foreground">{s.hospitalName}</p>
+                        )}
+                        {s.userPhone ? (
+                          <a href={`tel:${s.userPhone}`} className="text-primary hover:underline flex items-center gap-1 text-xs">
+                            <Phone className="h-3 w-3" />{s.userPhone}
+                          </a>
+                        ) : <span className="text-muted-foreground">—</span>}
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{s.radiusKm} km</TableCell>
-                    <TableCell className="text-sm">{s.donorsAlerted.length}</TableCell>
+                    <TableCell className="text-sm">
+                      {s.donorsAlerted.length > 0 ? (
+                        <span>{s.donorsAlerted.length}</span>
+                      ) : (
+                        <span className="text-xs text-blue-700 font-medium bg-blue-50 px-1.5 py-0.5 rounded">Hospital Triage</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm">
                       {yesCount(s) > 0
                         ? <span className="text-emerald-700 font-medium">{yesCount(s)} available</span>
@@ -188,12 +293,39 @@ export default function SosPage() {
                     <TableCell>{statusBadge(s.status)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{new Date(s.createdAt).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex flex-wrap gap-2 justify-end">
-                        <Button size="sm" variant="ghost" onClick={() => openDetail(s._id)} className="h-8 px-3">
+                      <div className="flex flex-wrap gap-1.5 justify-end">
+                        <Button size="sm" variant="ghost" onClick={() => openDetail(s._id)} className="h-8 px-2.5">
                           <Users className="h-4 w-4 mr-1" />Details
                         </Button>
+                        {s.tier === 'public' && s.status === 'pending' && (
+                          isSuperadmin ? (
+                            <div className="flex items-center gap-1.5">
+                              <Badge variant="outline" className="text-amber-800 bg-amber-50 border-amber-300 text-[10px] font-medium py-1">
+                                🩺 Hospital Review
+                              </Badge>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openForceResolve(s._id)}
+                                className="h-8 px-2 text-amber-800 border-amber-300 hover:bg-amber-50 text-xs font-medium"
+                                title="Force Resolve (Technical System Admin Override)"
+                              >
+                                <Wrench className="h-3.5 w-3.5 mr-1 text-amber-600" />Force Resolve
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              disabled={busyId === s._id}
+                              onClick={() => openClinicalConfirm(s)}
+                              className="h-8 px-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs shadow-xs"
+                            >
+                              <Siren className="h-3.5 w-3.5 mr-1" />Verify &amp; Alert
+                            </Button>
+                          )
+                        )}
                         {s.status === 'pending' && (
-                          <Button size="sm" variant="outline" disabled={busyId === s._id} onClick={() => setSosStatus(s._id, 'resolved')} className="h-8 px-3 text-emerald-700 border-emerald-200 hover:bg-emerald-50">
+                          <Button size="sm" variant="outline" disabled={busyId === s._id} onClick={() => setSosStatus(s._id, 'resolved')} className="h-8 px-2.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50">
                             <CheckCircle2 className="h-4 w-4 mr-1" />Resolve
                           </Button>
                         )}
@@ -220,8 +352,22 @@ export default function SosPage() {
             <Loading label="Loading…" />
           ) : (
             <div className="space-y-4">
+              {isSuperadmin && (
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-900 flex items-start gap-2">
+                  <ShieldAlert className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-amber-800">Platform Super Admin (IT Plane — Read-Only Monitoring)</p>
+                    <p className="text-[11px] text-amber-700 leading-relaxed mt-0.5">
+                      Under clinical governance and separation of duties, IT administrators cannot authorize clinical requisitions or trigger emergency donor broadcasts. Triage and donor blasts must be initiated by accredited hospital clinical staff.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-muted-foreground">Blood group:</span> <strong>{detail.bloodGroup}</strong></div>
+                <div><span className="text-muted-foreground">Reference:</span> <span className="font-mono font-medium">{detail.referenceId || detail._id.slice(-6).toUpperCase()}</span></div>
+                <div><span className="text-muted-foreground">Doctor:</span> {detail.doctorName || '—'}</div>
+                <div><span className="text-muted-foreground">Hospital:</span> {detail.hospitalName || '—'}</div>
                 <div><span className="text-muted-foreground">Radius:</span> {detail.radiusKm} km</div>
                 <div><span className="text-muted-foreground">Requester:</span> {detail.userPhone || '—'}</div>
                 <div>
@@ -290,6 +436,81 @@ export default function SosPage() {
               </>
             )}
             <Button variant="outline" onClick={() => setDetail(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Super Admin Technical Force-Resolve Dialog (IT Plane Override) */}
+      <Dialog open={forceResolveOpen} onOpenChange={setForceResolveOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-800">
+              <Wrench className="h-5 w-5 text-amber-600" /> Technical Force-Resolve (IT Override)
+            </DialogTitle>
+            <DialogDescription>
+              This is an administrative override for duplicate, bugged, or stuck emergency tickets. This action will be permanently logged in the immutable audit trail.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                Mandatory Technical Reason / Justification:
+              </label>
+              <textarea
+                value={forceResolveReason}
+                onChange={(e) => setForceResolveReason(e.target.value)}
+                placeholder="e.g. Technical duplicate created due to network timeout. Verified resolved with facility engineer."
+                rows={3}
+                className="w-full text-xs p-2.5 rounded-lg border border-border bg-background focus:ring-1 focus:ring-amber-500 focus:outline-none"
+              />
+              <p className="text-[11px] text-muted-foreground">Minimum 8 characters required. Logged with your admin identity.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForceResolveOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleForceResolve}
+              disabled={forceResolving || forceResolveReason.trim().length < 8}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-medium"
+            >
+              {forceResolving ? 'Applying Override…' : 'Confirm Technical Override'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hospital Staff Clinical Confirmation Dialog */}
+      <Dialog open={clinicalConfirmOpen} onOpenChange={setClinicalConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Siren className="h-5 w-5" /> Clinical Authorization &amp; Donor Broadcast
+            </DialogTitle>
+            <DialogDescription>
+              Authorizing mass voluntary donor mobilization for an emergency blood requisition.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedSosForBroadcast && (
+            <div className="space-y-3 py-2 text-xs">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1 text-red-900">
+                <p><strong>Blood Group Needed:</strong> {selectedSosForBroadcast.bloodGroup}</p>
+                <p><strong>Caller Phone:</strong> {selectedSosForBroadcast.userPhone || '—'}</p>
+                <p><strong>Broadcast Radius:</strong> {selectedSosForBroadcast.radiusKm} km</p>
+              </div>
+              <p className="text-muted-foreground leading-relaxed">
+                By confirming, you certify that hospital clinical triage has evaluated this emergency and authorized an immediate WhatsApp &amp; SMS broadcast to all compatible voluntary donors within {selectedSosForBroadcast.radiusKm}km.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClinicalConfirmOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleConfirmBroadcast}
+              disabled={confirmingBroadcast}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold"
+            >
+              {confirmingBroadcast ? 'Broadcasting…' : 'Confirm Clinical Need & Alert Donors'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

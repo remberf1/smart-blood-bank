@@ -16,11 +16,15 @@ import { Droplet, Wind, Inbox, Printer } from 'lucide-react';
 interface Hospital { _id: string; name: string }
 interface PatientRequest {
   _id: string;
+  referenceId?: string;
   patientName?: string;
   contactPhone: string;
   email?: string;
+  doctorName?: string;
+  doctorPhone?: string;
   resourceType: 'blood' | 'oxygen';
   bloodGroup?: string;
+  componentType?: string;
   units: number;
   urgency: 'emergency' | 'scheduled' | 'routine';
   scheduledTime?: string;
@@ -28,19 +32,46 @@ interface PatientRequest {
   ward?: string;
   bedNumber?: string;
   deliveryStatus: 'pending' | 'approved' | 'in-transit' | 'delivered' | 'cancelled';
+  cancellation?: {
+    reason: string;
+    notes?: string;
+    cancelledAt?: string;
+    cancelledByRole?: string;
+  };
   cancellationReason?: string;
   cancelledAt?: string;
   preferredHospitalId?: Hospital | null;
   allocatedHospitalId?: Hospital | null;
+  doctorRef?: {
+    id?: string;
+    name?: string;
+    phone?: string;
+    mdcnNumber?: string;
+    hospitalAffiliation?: string;
+    verificationStatus: 'verified_id' | 'phone_only' | 'unverified';
+  };
+  source?: 'web_form' | 'whatsapp_doctor' | 'whatsapp_bridge' | 'dashboard_requisition' | 'sos_escalation';
   createdAt: string;
   notes?: string;
 }
 
+const CANCELLATION_REASONS = [
+  { value: 'stock_unavailable', label: 'Hospital Stock Unavailable / Out of Stock' },
+  { value: 'patient_deceased', label: 'Patient Deceased' },
+  { value: 'patient_transferred', label: 'Patient Transferred to Another Facility' },
+  { value: 'found_elsewhere', label: 'Found Blood / Sourced Elsewhere' },
+  { value: 'no_longer_needed', label: 'Clinically No Longer Needed / Condition Stabilized' },
+  { value: 'clinical_contraindication', label: 'Clinical Contraindication / Crossmatch Failed' },
+  { value: 'donor_unavailable', label: 'Compatible Donor Unavailable' },
+  { value: 'timed_out', label: 'Timed Out / Requisition Expired' },
+  { value: 'other', label: 'Other Reason (Specify below)' },
+];
+
 const STATUSES = ['', 'pending', 'approved', 'in-transit', 'delivered', 'cancelled'];
 const NEXT: Record<string, { status: string; label: string; variant?: any }[]> = {
   pending: [{ status: 'approved', label: 'Approve' }, { status: 'cancelled', label: 'Cancel', variant: 'destructive' }],
-  approved: [{ status: 'in-transit', label: 'In Transit' }, { status: 'delivered', label: 'Deliver' }, { status: 'cancelled', label: 'Cancel', variant: 'destructive' }],
-  'in-transit': [{ status: 'delivered', label: 'Deliver' }, { status: 'cancelled', label: 'Cancel', variant: 'destructive' }],
+  approved: [{ status: 'in-transit', label: 'Dispatch' }, { status: 'delivered', label: 'Deliver' }, { status: 'cancelled', label: 'Cancel', variant: 'destructive' }],
+  'in-transit': [{ status: 'delivered', label: 'Mark Delivered' }, { status: 'cancelled', label: 'Cancel', variant: 'destructive' }],
 };
 
 function statusBadge(s: string) {
@@ -70,6 +101,12 @@ export default function PatientRequestsPage() {
   const [assignSel, setAssignSel] = useState<Record<string, string>>({});
   const [printModalRequest, setPrintModalRequest] = useState<PatientRequest | null>(null);
 
+  // Structured Cancellation Modal State
+  const [cancelModalReq, setCancelModalReq] = useState<PatientRequest | null>(null);
+  const [cancelReason, setCancelReason] = useState('stock_unavailable');
+  const [cancelNotes, setCancelNotes] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -86,7 +123,7 @@ export default function PatientRequestsPage() {
       setTotalPages(r.data.totalPages);
       setTotal(r.data.total);
     } catch {
-      toast.error('Failed to load requests');
+      toast.error('Failed to load requisitions');
     } finally {
       setLoading(false);
     }
@@ -106,6 +143,28 @@ export default function PatientRequestsPage() {
     }
   };
 
+  const handleCancelRequisition = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelModalReq) return;
+    setCancelling(true);
+    try {
+      await apiClient.put(`/patient-requests/${cancelModalReq._id}/status`, {
+        deliveryStatus: 'cancelled',
+        cancellationReason: cancelReason,
+        cancellationNotes: cancelNotes.trim() || undefined,
+      });
+      toast.success('Requisition cancelled and reserved units returned to stock');
+      setCancelModalReq(null);
+      setCancelReason('stock_unavailable');
+      setCancelNotes('');
+      fetchData();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Cancellation failed');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const assign = async (id: string) => {
     const hospitalId = assignSel[id];
     if (!hospitalId) return;
@@ -121,7 +180,7 @@ export default function PatientRequestsPage() {
   const claim = async (id: string) => {
     try {
       await apiClient.post(`/patient-requests/${id}/assign`, {});
-      toast.success('Request claimed & approved for your hospital!');
+      toast.success('Requisition claimed & approved for your hospital!');
       fetchData();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Claim failed');
@@ -135,7 +194,10 @@ export default function PatientRequestsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Patient Requests" subtitle="Requests submitted by patients & families" />
+      <PageHeader
+        title="Clinical Requisitions"
+        subtitle="Clinical orders for blood & oxygen from physicians and hospital units"
+      />
 
       {/* Scope & Status filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -215,7 +277,7 @@ export default function PatientRequestsPage() {
 
       <Card>
         <CardContent className="p-0 overflow-x-auto">
-          <Table>
+          <Table className="min-w-[1100px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Patient</TableHead>
@@ -224,7 +286,7 @@ export default function PatientRequestsPage() {
                 <TableHead>Units</TableHead>
                 <TableHead>Urgency</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Hospital</TableHead>
+                <TableHead className="min-w-[210px]">Supplying Blood Bank</TableHead>
                 <TableHead>Requested</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -233,20 +295,51 @@ export default function PatientRequestsPage() {
               {loading ? (
                 <TableRow><TableCell colSpan={9}><Loading /></TableCell></TableRow>
               ) : requests.length === 0 ? (
-                <TableRow><TableCell colSpan={9}><EmptyState icon={Inbox} title={`No patient requests${status ? ` (${status})` : ''}`} hint="New requests from the public form or WhatsApp will appear here." /></TableCell></TableRow>
+                <TableRow><TableCell colSpan={9}><EmptyState icon={Inbox} title={`No requisitions${status ? ` (${status})` : ''}`} hint="New clinical requisitions from the web form, WhatsApp bot, or hospital system will appear here." /></TableCell></TableRow>
               ) : (
                 requests.map((r) => (
                   <TableRow key={r._id}>
                     <TableCell className="font-medium">
-                      <div>{r.patientName || <span className="text-muted-foreground">—</span>}</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span>{r.patientName || <span className="text-muted-foreground">Clinical Patient</span>}</span>
+                        {r.referenceId && (
+                          <span className="font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold border border-slate-200">
+                            {r.referenceId}
+                          </span>
+                        )}
+                      </div>
                       {(r.destinationFacility || r.ward) && (
                         <div className="text-[11px] text-muted-foreground mt-0.5">
-                          🏥 {r.destinationFacility || 'Facility'}{r.ward ? ` (${r.ward}${r.bedNumber ? ` · ${r.bedNumber}` : ''})` : ''}
+                          🏥 {r.destinationFacility || 'Facility'}{r.ward ? ` (${r.ward}${r.bedNumber ? ` · Bed ${r.bedNumber}` : ''})` : ''}
                         </div>
                       )}
-                      {r.deliveryStatus === 'cancelled' && r.cancellationReason && (
-                        <div className="text-[10px] text-red-600 mt-0.5">
-                          ⚠️ {r.cancellationReason}
+                      {(r.doctorRef?.name || r.doctorName) && (
+                        <div className="text-xs mt-1 flex items-center gap-1.5 flex-wrap">
+                          <span className="text-slate-800 font-medium">🩺 {r.doctorRef?.name || r.doctorName}</span>
+                          {r.doctorRef?.verificationStatus === 'verified_id' ? (
+                            <Badge className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0">
+                              ✓ Verified Clinician
+                            </Badge>
+                          ) : r.doctorRef?.verificationStatus === 'phone_only' ? (
+                            <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0">
+                              Phone Verified
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0">
+                              Unverified
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                      {r.source && (
+                        <div className="text-[10px] text-muted-foreground/80 mt-0.5 capitalize">
+                          Channel: {r.source.replace(/_/g, ' ')}
+                        </div>
+                      )}
+                      {r.deliveryStatus === 'cancelled' && (r.cancellation?.reason || r.cancellationReason) && (
+                        <div className="text-[10px] text-red-600 mt-1 font-medium bg-red-50 p-1 rounded border border-red-200">
+                          ⚠️ Cancelled: {(r.cancellation?.reason || r.cancellationReason || '').replace(/_/g, ' ')}
+                          {r.cancellation?.notes ? ` — "${r.cancellation.notes}"` : ''}
                         </div>
                       )}
                     </TableCell>
@@ -271,24 +364,53 @@ export default function PatientRequestsPage() {
                       )}
                     </TableCell>
                     <TableCell>{statusBadge(r.deliveryStatus)}</TableCell>
-                    <TableCell className="text-sm">
-                      {r.allocatedHospitalId?.name || r.preferredHospitalId?.name || <span className="text-amber-600 font-medium">Unassigned</span>}
+                    <TableCell className="text-sm min-w-[210px]">
+                      <div className="space-y-1">
+                        {r.allocatedHospitalId ? (
+                          <div className="font-medium text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block text-xs">
+                            🏥 {r.allocatedHospitalId.name}
+                          </div>
+                        ) : (
+                          <div className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-xs font-medium inline-block">
+                            ⚠️ Pending Allocation
+                          </div>
+                        )}
+                        <div className="text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-gray-500">Destination:</span> {r.destinationFacility || r.preferredHospitalId?.name || 'Local Hospital'}
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex flex-col items-end gap-2">
                         <div className="flex flex-wrap gap-1.5 justify-end">
                           {canAct(r) && (NEXT[r.deliveryStatus] || []).map((a) => (
-                            <Button key={a.status} size="sm" variant={a.variant || 'default'} onClick={() => advance(r._id, a.status)}>{a.label}</Button>
+                            <Button
+                              key={a.status}
+                              size="sm"
+                              variant={a.variant || 'default'}
+                              onClick={() => {
+                                if (a.status === 'cancelled') {
+                                  setCancelModalReq(r);
+                                  setCancelReason('stock_unavailable');
+                                  setCancelNotes('');
+                                } else {
+                                  advance(r._id, a.status);
+                                }
+                              }}
+                            >
+                              {a.label}
+                            </Button>
                           ))}
                           {r.deliveryStatus !== 'cancelled' && (
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-8 px-2 text-xs text-gray-700 hover:text-gray-900 border-gray-300"
+                              className="h-8 px-2.5 text-xs text-gray-700 hover:text-gray-900 border-gray-300 flex items-center gap-1"
                               onClick={() => setPrintModalRequest(r)}
+                              title="Print Crossmatch & Transfusion Form"
                             >
-                              <Printer className="h-3.5 w-3.5 mr-1" /> Slip
+                              <Printer className="h-3.5 w-3.5 text-primary" /> Print Crossmatch Form
                             </Button>
                           )}
                         </div>
@@ -518,6 +640,85 @@ export default function PatientRequestsPage() {
                 Strict storage instruction: Blood products must be stored at +2°C to +6°C and transfused within 30 minutes of leaving cold storage. Oxygen cylinders must be kept upright and secured in well-ventilated areas.
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Structured Cancellation Modal */}
+      {cancelModalReq && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-card rounded-xl max-w-md w-full shadow-2xl border border-border overflow-hidden p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div>
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span className="text-red-600">🛑</span> Cancel Clinical Requisition
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Ref: <strong className="font-mono text-foreground">{cancelModalReq.referenceId || cancelModalReq._id}</strong> · {cancelModalReq.patientName || 'Patient'} ({cancelModalReq.units}u {cancelModalReq.bloodGroup || 'Oxygen'})
+              </p>
+            </div>
+
+            <form onSubmit={handleCancelRequisition} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Clinical Cancellation Reason *
+                </label>
+                <select
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  className="w-full text-xs border border-input rounded-lg p-2.5 bg-background text-foreground focus:ring-2 focus:ring-primary focus:outline-hidden"
+                  required
+                >
+                  {CANCELLATION_REASONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground block mb-1">
+                  Clinical Notes / Context (Optional)
+                </label>
+                <textarea
+                  value={cancelNotes}
+                  onChange={(e) => setCancelNotes(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Attending physician confirmed patient was transferred to FMC Abeokuta."
+                  className="w-full text-xs border border-input rounded-lg p-2.5 bg-background text-foreground focus:ring-2 focus:ring-primary focus:outline-hidden"
+                />
+              </div>
+
+              <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-xs text-amber-900 dark:text-amber-200">
+                <p className="font-semibold flex items-center gap-1.5 mb-0.5">
+                  <span>⚡</span> Automatic System Consequences
+                </p>
+                <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                  Confirming cancellation will release any allocated blood units back to hospital stock, terminate pending SOS broadcasts, and log the reason in the scarcity audit funnel.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCancelModalReq(null)}
+                  disabled={cancelling}
+                >
+                  Keep Active
+                </Button>
+                <Button
+                  type="submit"
+                  variant="destructive"
+                  size="sm"
+                  disabled={cancelling}
+                  className="font-medium"
+                >
+                  {cancelling ? 'Cancelling…' : 'Confirm Cancellation'}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

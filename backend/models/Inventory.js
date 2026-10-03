@@ -11,10 +11,19 @@ const inventorySchema = new mongoose.Schema({
   },
   storageTemperature: { type: String },
   units: { type: Number, default: 0 },
+  reservedUnits: { type: Number, default: 0, min: 0 },
   oxygenCylinderCount: { type: Number, default: 0 },
   oxygenFillStatus: { type: String, enum: ['full', 'partial', 'empty'], default: 'empty' },
   lastUpdatedAt: { type: Date, default: Date.now },
   expiryAlerts: [{ bloodUnitId: String, expiryDate: Date, componentType: String }],
+}, {
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+});
+
+// Available physical units after subtracting active hospital reservations
+inventorySchema.virtual('availableUnits').get(function () {
+  return Math.max(0, (this.units || 0) - (this.reservedUnits || 0));
 });
 
 // One blood row per hospital + group + component: allows separate inventory tracking

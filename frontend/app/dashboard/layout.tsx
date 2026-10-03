@@ -36,10 +36,10 @@ const navItems = [
   { name: 'Appointments', href: '/dashboard/appointments', icon: CalendarCheck, roles: STAFF, badgeKey: 'appointments' },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3, roles: STAFF },
   { name: 'Forecast', href: '/dashboard/forecast', icon: TrendingUp, roles: STAFF },
-  { name: 'Patient Requests', href: '/dashboard/patient-requests', icon: HeartPulse, roles: ADMIN, badgeKey: 'patientRequests' }, // approve/assign
+  { name: 'Clinical Requisitions', href: '/dashboard/patient-requests', icon: HeartPulse, roles: ADMIN, badgeKey: 'patientRequests' }, // approve/assign
   { name: 'Resource Requests', href: '/dashboard/requests', icon: ArrowRightLeft, roles: ADMIN, badgeKey: 'resourceRequests' },
   { name: 'Hospitals', href: '/dashboard/hospitals', icon: Building2, roles: ADMIN },
-  { name: 'SOS', href: '/dashboard/sos', icon: Siren, roles: ADMIN, badgeKey: 'sos' },
+  { name: 'SOS', href: '/dashboard/sos', icon: Siren, roles: STAFF, badgeKey: 'sos' },
   { name: 'Users', href: '/dashboard/users', icon: UserCog, roles: SUPER },
   { name: 'Audit Log', href: '/dashboard/audit', icon: ScrollText, roles: SUPER },
 ];

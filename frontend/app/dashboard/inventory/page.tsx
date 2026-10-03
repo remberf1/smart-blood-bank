@@ -40,6 +40,8 @@ interface BloodInventoryItem {
   componentType?: "WHOLE_BLOOD" | "PACKED_RED_CELLS" | "PLATELET_CONCENTRATE" | "FRESH_FROZEN_PLASMA" | "CRYOPRECIPITATE";
   storageTemperature?: string;
   units: number;
+  reservedUnits?: number;
+  availableUnits?: number;
   lastUpdatedAt: string;
 }
 
@@ -64,6 +66,16 @@ const COMPONENT_TYPES = [
 const COMPONENT_MAP: Record<string, typeof COMPONENT_TYPES[number]> = Object.fromEntries(
   COMPONENT_TYPES.map((c) => [c.value, c])
 );
+
+const DISCARD_REASONS = [
+  { value: "expired", label: "Expired (Shelf-Life Exceeded)" },
+  { value: "broken_seal", label: "Broken Seal / Container Leakage" },
+  { value: "positive_nat", label: "Positive NAT / Reactive Serology (TTI)" },
+  { value: "hemolyzed", label: "Hemolyzed / Gross Lipemia" },
+  { value: "clotted", label: "Clotted Unit (Fibrin Strands Detected)" },
+  { value: "cold_chain_breakage", label: "Cold Chain Temperature Excursion (>6°C / Extended Thaw)" },
+  { value: "other", label: "Other Clinical / Laboratory Cause" },
+];
 
 export default function InventoryPage() {
   const { user } = useAuth();
@@ -90,6 +102,13 @@ export default function InventoryPage() {
   );
   const [editingOxygen, setEditingOxygen] =
     useState<OxygenInventoryItem | null>(null);
+
+  // Discard dialog state
+  const [discardModalItem, setDiscardModalItem] = useState<BloodInventoryItem | null>(null);
+  const [discardUnits, setDiscardUnits] = useState(1);
+  const [discardReason, setDiscardReason] = useState("expired");
+  const [discardNotes, setDiscardNotes] = useState("");
+  const [discarding, setDiscarding] = useState(false);
 
   // Form data
   const [bloodForm, setBloodForm] = useState({
@@ -178,15 +197,34 @@ export default function InventoryPage() {
     setBloodDialogOpen(true);
   };
 
-  const handleDeleteBlood = async (id: string) => {
-    if (confirm("Delete this blood inventory?")) {
-      try {
-        await apiClient.delete(`/inventory/${id}`);
-        toast.success("Deleted");
-        fetchAllData();
-      } catch (err: any) {
-        toast.error(err.response?.data?.error || "Delete failed");
-      }
+  const openDiscardModal = (item: BloodInventoryItem) => {
+    setDiscardModalItem(item);
+    setDiscardUnits(Math.min(1, Math.max(1, item.units)));
+    setDiscardReason("expired");
+    setDiscardNotes("");
+  };
+
+  const handleConfirmDiscard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!discardModalItem) return;
+    setDiscarding(true);
+    try {
+      await apiClient.post("/inventory/blood/discard", {
+        inventoryId: discardModalItem._id,
+        hospitalId: (discardModalItem.hospitalId as any)?._id || discardModalItem.hospitalId,
+        bloodGroup: discardModalItem.bloodGroup,
+        componentType: discardModalItem.componentType,
+        units: discardUnits,
+        reason: discardReason,
+        notes: discardNotes,
+      });
+      toast.success(`${discardUnits} unit(s) recorded as discarded / wasted`);
+      setDiscardModalItem(null);
+      fetchAllData();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "Discard operation failed");
+    } finally {
+      setDiscarding(false);
     }
   };
 
@@ -288,7 +326,11 @@ export default function InventoryPage() {
       .filter((i) => i.bloodGroup === bg)
       .reduce((s, i) => s + i.units, 0),
   }));
-  const stockLevel = (u: number) => (u === 0 ? "out" : u < 10 ? "low" : "ok");
+  const stockLevel = (u: number) => (u === 0 ? "out" : u < 10 ? "low" : u >= 25 ? "high" : "ok");
+  const wholeBloodUnits = validBloodInventory
+    .filter((i) => !hospitalFilter || i.hospitalId?._id === hospitalFilter)
+    .filter((i) => (i.componentType || "PACKED_RED_CELLS") === "WHOLE_BLOOD")
+    .reduce((s, i) => s + i.units, 0);
 
   // Filtered + paginated detail rows.
   const filteredBlood = validBloodInventory
@@ -486,17 +528,20 @@ export default function InventoryPage() {
                       ? "bg-red-50 border-red-200 text-red-700"
                       : lvl === "low"
                         ? "bg-amber-50 border-amber-200 text-amber-700"
-                        : "bg-emerald-50 border-emerald-200 text-emerald-700";
+                        : lvl === "high"
+                          ? "bg-amber-100 border-amber-400 text-amber-950 font-semibold ring-1 ring-amber-300"
+                          : "bg-emerald-50 border-emerald-200 text-emerald-700";
                   return (
                     <button
                       key={g.bloodGroup}
                       type="button"
                       onClick={() => { setGroupFilter(g.bloodGroup === groupFilter ? "" : g.bloodGroup); resetBloodPage(); }}
                       className={`rounded-lg border p-2 text-center transition-colors ${cls} ${groupFilter === g.bloodGroup ? "ring-2 ring-primary" : ""}`}
-                      title={lvl === "out" ? "Unavailable" : `${g.units} units`}
+                      title={lvl === "out" ? "Unavailable" : lvl === "high" ? `${g.units} units (High stock — shelf-life expiry risk)` : `${g.units} units`}
                     >
                       <div className="text-sm font-bold">{g.bloodGroup}</div>
                       <div className="text-xs">{lvl === "out" ? "Out" : `${g.units}u`}</div>
+                      {lvl === "high" && <div className="text-[9px] font-bold text-amber-800 uppercase tracking-tighter">High Stock</div>}
                     </button>
                   );
                 })}
@@ -508,6 +553,24 @@ export default function InventoryPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Whole Blood Component Separation Advisory */}
+          {wholeBloodUnits > 0 && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900 flex items-start gap-3 shadow-2xs">
+              <div className="p-1 rounded bg-blue-200 text-blue-800 shrink-0 mt-0.5">
+                <Droplet className="h-4 w-4" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="font-bold text-blue-950">
+                  💡 Clinical Component Separation Advisory ({wholeBloodUnits} Whole Blood unit{wholeBloodUnits === 1 ? '' : 's'} on hand)
+                </p>
+                <p className="text-blue-800/90 leading-relaxed">
+                  Modern transfusion therapy prioritizes fractionated components over whole blood.
+                  Unless reserved for active Massive Transfusion Protocols (MTP), separating these units into Packed Red Cells (PRBC), Platelets, and FFP within 8 hours expands clinical efficacy and prevents whole-unit wastage.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Component Type Filter Pills */}
           <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-muted/40 rounded-xl border border-border">
@@ -626,22 +689,33 @@ export default function InventoryPage() {
                   )}
                   {pagedBlood.map((item) => {
                     const compMeta = COMPONENT_MAP[item.componentType || "PACKED_RED_CELLS"] || COMPONENT_MAP.PACKED_RED_CELLS;
+                    const reserved = item.reservedUnits || 0;
+                    const available = Math.max(0, item.units - reserved);
+                    const isOverstocked = available >= 18;
                     const status =
                       item.units === 0
                         ? "Out of Stock"
-                        : item.units < 5
-                          ? "Low Stock"
-                          : item.units < 10
-                            ? "Limited"
-                            : "Available";
+                        : available === 0
+                          ? "Fully Reserved"
+                          : available < 5
+                            ? "Low Stock"
+                            : available < 10
+                              ? "Limited"
+                              : isOverstocked
+                                ? "High Stock (Expiry Risk)"
+                                : "Available";
                     const badgeClass =
                       item.units === 0
                         ? "bg-red-100 text-red-800"
-                        : item.units < 5
-                          ? "bg-yellow-100 text-yellow-800"
-                          : item.units < 10
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-green-100 text-green-800";
+                        : available === 0
+                          ? "bg-blue-100 text-blue-900 border-blue-300 font-semibold"
+                          : available < 5
+                            ? "bg-yellow-100 text-yellow-800"
+                            : available < 10
+                              ? "bg-blue-100 text-blue-800"
+                              : isOverstocked
+                                ? "bg-amber-100 text-amber-900 border-amber-300 font-semibold shadow-2xs"
+                                : "bg-green-100 text-green-800";
                     return (
                       <TableRow key={item._id}>
                         <TableCell className="font-medium">{item.hospitalId?.name || "Unknown Hospital"}</TableCell>
@@ -650,6 +724,11 @@ export default function InventoryPage() {
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${compMeta.color}`}>
                             {compMeta.shortLabel}
                           </span>
+                          {item.componentType === "WHOLE_BLOOD" && (
+                            <span className="text-[10px] text-blue-700 font-semibold block mt-0.5" title="Component separation recommended within 8 hours">
+                              Fractionate
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell className="text-center text-xs">
                           <span className="text-muted-foreground font-mono bg-muted/60 px-2 py-0.5 rounded">
@@ -659,10 +738,21 @@ export default function InventoryPage() {
                             <div className="text-[10px] text-amber-700 font-medium mt-0.5">⚠️ 5-day shelf life</div>
                           )}
                         </TableCell>
-                        <TableCell className="text-center font-semibold">{item.units}</TableCell>
+                        <TableCell className="text-center">
+                          <div className="font-bold text-sm text-foreground">
+                            {available} <span className="text-xs font-normal text-muted-foreground">avail</span>
+                          </div>
+                          {reserved > 0 ? (
+                            <div className="text-[10px] text-blue-700 font-semibold bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 mt-0.5 inline-block">
+                              {reserved} reserved ({item.units} total)
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-muted-foreground">{item.units} total</div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-center">
                           <Badge className={badgeClass}>
-                            {status} ({item.units})
+                            {status} ({available}u)
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -670,22 +760,26 @@ export default function InventoryPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           {canManageStock ? (
-                            <>
+                            <div className="flex items-center justify-end gap-1.5">
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleEditBlood(item)}
+                                title="Adjust inventory count"
+                                className="h-8 w-8 p-0"
                               >
-                                <Edit className="h-4 w-4" />
+                                <Edit className="h-4 w-4 text-blue-600" />
                               </Button>
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
-                                onClick={() => handleDeleteBlood(item._id)}
+                                onClick={() => openDiscardModal(item)}
+                                title="Log units as discarded / wasted with clinical reason code"
+                                className="h-8 px-2 text-xs text-red-600 hover:text-red-700 border-red-200 hover:bg-red-50 flex items-center gap-1 font-medium"
                               >
-                                <Trash2 className="h-4 w-4 text-red-500" />
+                                <Trash2 className="h-3.5 w-3.5" /> Discard / Waste
                               </Button>
-                            </>
+                            </div>
                           ) : (
                             <span className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded">
                               Auto-managed
@@ -910,6 +1004,72 @@ export default function InventoryPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Blood Discard / Wastage Modal Dialog */}
+      <Dialog open={!!discardModalItem} onOpenChange={(open) => !open && setDiscardModalItem(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="h-5 w-5" /> Log Blood Unit Discard / Wastage
+            </DialogTitle>
+          </DialogHeader>
+          {discardModalItem && (
+            <form onSubmit={handleConfirmDiscard}>
+              <div className="space-y-4 py-2 text-xs">
+                <div className="p-3 bg-muted/40 rounded-lg border border-border space-y-1">
+                  <p><strong>Hospital:</strong> {discardModalItem.hospitalId?.name}</p>
+                  <p><strong>Blood Group:</strong> <span className="font-bold text-red-700">{discardModalItem.bloodGroup}</span> ({COMPONENT_MAP[discardModalItem.componentType || "PACKED_RED_CELLS"]?.shortLabel})</p>
+                  <p><strong>Available in Batch:</strong> {discardModalItem.units} unit(s)</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Units to Discard *</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max={discardModalItem.units}
+                    value={discardUnits}
+                    onChange={(e) => setDiscardUnits(Math.max(1, Math.min(discardModalItem.units, parseInt(e.target.value) || 1)))}
+                    required
+                  />
+                  <p className="text-[10px] text-muted-foreground">Cannot exceed available units on hand.</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Clinical Reason Code *</Label>
+                  <select
+                    value={discardReason}
+                    onChange={(e) => setDiscardReason(e.target.value)}
+                    className="w-full border border-input rounded-md p-2 text-xs bg-card font-medium"
+                    required
+                  >
+                    {DISCARD_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Clinical / Laboratory Notes (Optional)</Label>
+                  <textarea
+                    rows={2}
+                    value={discardNotes}
+                    onChange={(e) => setDiscardNotes(e.target.value)}
+                    placeholder="e.g. Visual clot observed during inspection or cold chain logger excursion..."
+                    className="w-full border border-input rounded-md p-2 text-xs bg-card"
+                  />
+                </div>
+              </div>
+              <DialogFooter className="mt-4">
+                <Button variant="outline" type="button" onClick={() => setDiscardModalItem(null)} disabled={discarding}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="destructive" disabled={discarding}>
+                  {discarding ? "Logging Discard…" : "Confirm Discard"}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Oxygen Dialog */}
       <Dialog open={oxygenDialogOpen} onOpenChange={setOxygenDialogOpen}>
         <DialogContent>

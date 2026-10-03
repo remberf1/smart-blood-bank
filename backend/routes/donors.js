@@ -11,7 +11,7 @@ const { addBloodUnits } = require("../services/inventoryService");
 const { refreshDonorEligibility } = require("../services/eligibilityService");
 const { allocateBlood } = require("../services/allocationService");
 const { validate } = require("../middleware/validate");
-const { donorRegisterSchema } = require("../validators/schemas");
+const { donorRegisterSchema, verifyBloodGroupSchema } = require("../validators/schemas");
 const { logAudit } = require("../services/auditService");
 
 // Shared donation-recording logic used by both the QR-scan (/verify) and the
@@ -48,6 +48,41 @@ async function recordDonationForDonor(donor, hospitalId, triageData = null) {
       throw err;
     }
     if (triageData.weight) donor.weight = Number(triageData.weight);
+  }
+
+  // Pre-donation ABO/Rh confirmatory test requirement:
+  // If the donor's blood group is unverified or pending verification, a confirmatory laboratory test
+  // (e.g. Tube Agglutination or Gel Card) MUST be documented before blood is drawn and entered into inventory.
+  if (donor.bloodGroupVerificationStatus !== 'verified') {
+    if (!triageData?.verifiedGroup || !triageData?.verificationMethod) {
+      const err = new Error(
+        "Confirmatory ABO/Rh blood grouping test is mandatory for unverified/self-reported donors prior to logging blood into inventory."
+      );
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  // Laboratory confirmatory blood grouping at donation intake
+  if (triageData?.verifiedGroup && triageData?.verificationMethod) {
+    const prevGroup = donor.bloodGroupVerified || donor.bloodGroupSelfReported || donor.bloodGroup;
+    donor.verificationHistory.push({
+      verifiedBy: triageData.staffId || undefined,
+      verifiedAt: new Date(),
+      verificationMethod: triageData.verificationMethod,
+      verifiedGroup: triageData.verifiedGroup,
+      previousGroup: prevGroup,
+      hospitalId,
+      reason: 'Confirmatory blood test at donation intake',
+      notes: triageData.notes || 'Routine pre-donation laboratory testing',
+    });
+    donor.bloodGroupVerified = triageData.verifiedGroup;
+    donor.bloodGroup = triageData.verifiedGroup;
+    donor.bloodGroupVerificationStatus = 'verified';
+    if (donor.correctionRequest && donor.correctionRequest.status === 'pending') {
+      donor.correctionRequest.status = 'approved';
+      donor.correctionRequest.reviewedAt = new Date();
+    }
   }
 
   donor.lastDonationDate = new Date();
@@ -145,12 +180,16 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
       evaluateDonorEligibility({ dateOfBirth, weight, lastDonationDate });
 
     // Create donor with formatted phone
+    const reportedGroup = req.body.bloodGroupSelfReported || bloodGroup || "UNKNOWN";
     const donor = new Donor({
       name,
       phone: formattedPhone,
       email: normalizedEmail || undefined,
       password,
-      bloodGroup,
+      bloodGroup: reportedGroup === "UNKNOWN" ? "O+" : reportedGroup,
+      bloodGroupSelfReported: reportedGroup,
+      bloodGroupVerified: null,
+      bloodGroupVerificationStatus: 'unverified',
       donationTypePreference: donationTypePreference || 'WHOLE_BLOOD',
       nonRemunerationDeclared: nonRemunerationDeclared !== false,
       location,
@@ -236,6 +275,12 @@ router.post("/verify", auth, async (req, res) => {
       }
       donorId = decoded.donorId;
     } catch (tokenErr) {
+      if (tokenErr.name === 'TokenExpiredError') {
+        return res.status(400).json({
+          error: "Digital Donor Pass has EXPIRED (Anti-Screenshot Security). Please ask the donor to present the live rotating pass in their mobile app.",
+          code: "PASS_EXPIRED",
+        });
+      }
       // Direct Mongo ObjectId fallback (e.g. manual entry or scanner reading ID)
       if (/^[a-fA-F0-9]{24}$/.test(trimmedData)) {
         donorId = trimmedData;
@@ -289,12 +334,17 @@ router.post("/verify", auth, async (req, res) => {
     res.json({
       verified: true,
       donor: {
+        _id: donor._id,
         name: donor.name,
         bloodGroup: donor.bloodGroup,
+        bloodGroupSelfReported: donor.bloodGroupSelfReported,
+        bloodGroupVerified: donor.bloodGroupVerified,
+        bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus || 'unverified',
         phone: donor.phone,
         eligibilityStatus: donor.eligibilityStatus,
         lastDonationDate: donor.lastDonationDate,
         deferralReason: donor.deferralReason,
+        ninMasked: donor.nin ? `NIN-*****${donor.nin.slice(-4)}` : undefined,
       },
     });
   } catch (err) {
@@ -314,6 +364,12 @@ router.post(
   allowRoles("superadmin", "admin", "staff"),
   async (req, res) => {
     try {
+      if (req.user.role === "superadmin") {
+        return res.status(403).json({
+          error: "Separation of Duties violation: Super Admin cannot record phlebotomy donations. Clinical intake must be performed by certified hospital staff.",
+        });
+      }
+
       const donor = await Donor.findById(req.params.donorId);
       if (!donor) return res.status(404).json({ error: "Donor not found" });
 
@@ -392,8 +448,137 @@ router.get("/:donorId/qrcode", auth, async (req, res) => {
   }
 });
 
+// ==================== VERIFY / UPDATE DONOR BLOOD GROUP (Staff/Admin) ====================
+router.post(
+  "/:donorId/verify-blood-group",
+  auth,
+  allowRoles("admin", "superadmin", "staff"),
+  validate(verifyBloodGroupSchema),
+  async (req, res) => {
+    try {
+      if (req.user.role === "superadmin") {
+        return res.status(403).json({
+          error: "Separation of Duties violation: Super Admin cannot certify laboratory blood grouping. Verification must be performed by hospital laboratory staff.",
+        });
+      }
+
+      const donor = await Donor.findById(req.params.donorId);
+      if (!donor) return res.status(404).json({ error: "Donor not found" });
+
+      const { verifiedGroup, verificationMethod, notes, action } = req.body;
+
+      // Handle rejection of a pending correction request
+      if (action === 'reject') {
+        if (donor.correctionRequest && donor.correctionRequest.status === 'pending') {
+          donor.correctionRequest.status = 'rejected';
+          donor.correctionRequest.reviewedBy = req.user._id;
+          donor.correctionRequest.reviewedAt = new Date();
+          donor.correctionRequest.reviewNotes = notes || 'Rejected after clinical laboratory review';
+        }
+        donor.bloodGroupVerificationStatus = donor.bloodGroupVerified ? 'verified' : 'unverified';
+        await donor.save();
+
+        logAudit(req.user, 'donor.blood_group_verify_reject', {
+          entity: 'Donor',
+          entityId: donor._id,
+          hospitalId: req.user.hospitalId,
+          summary: `Rejected correction request for ${donor.name} (notes: ${notes || 'none'})`,
+        });
+
+        return res.json({
+          message: 'Correction request rejected. Current blood group remains unchanged.',
+          donor: {
+            id: donor._id,
+            name: donor.name,
+            bloodGroup: donor.bloodGroup,
+            bloodGroupSelfReported: donor.bloodGroupSelfReported,
+            bloodGroupVerified: donor.bloodGroupVerified,
+            bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+            correctionRequest: donor.correctionRequest,
+          },
+        });
+      }
+
+      const previousGroup = donor.bloodGroupVerified || donor.bloodGroupSelfReported || donor.bloodGroup;
+
+      // Append immutable verification audit record
+      donor.verificationHistory.push({
+        verifiedBy: req.user._id,
+        verifiedAt: new Date(),
+        verificationMethod,
+        verifiedGroup,
+        previousGroup,
+        hospitalId: req.user.hospitalId,
+        reason: donor.correctionRequest?.reason || 'Clinical laboratory blood grouping',
+        notes: notes || undefined,
+      });
+
+      // Update verified blood group
+      donor.bloodGroupVerified = verifiedGroup;
+      donor.bloodGroup = verifiedGroup;
+      donor.bloodGroupVerificationStatus = 'verified';
+
+      // Approve correction request if one was pending
+      if (donor.correctionRequest && donor.correctionRequest.status === 'pending') {
+        donor.correctionRequest.status = 'approved';
+        donor.correctionRequest.reviewedBy = req.user._id;
+        donor.correctionRequest.reviewedAt = new Date();
+        donor.correctionRequest.reviewNotes = notes || 'Approved following laboratory crossmatching';
+      }
+
+      // Re-generate verified digital QR pass
+      try {
+        const qrToken = jwt.sign(
+          {
+            donorId: donor._id,
+            type: "donor-verify",
+            bloodGroup: verifiedGroup,
+            verified: true,
+            verifiedBy: req.user._id,
+          },
+          process.env.JWT_SECRET
+        );
+        donor.qrCode = await QRCode.toDataURL(qrToken, {
+          errorCorrectionLevel: "H",
+          margin: 1,
+          width: 300,
+        });
+      } catch (qrErr) {
+        console.warn('QR regeneration warning:', qrErr.message);
+      }
+
+      await donor.save();
+
+      logAudit(req.user, 'donor.blood_group_verified', {
+        entity: 'Donor',
+        entityId: donor._id,
+        hospitalId: req.user.hospitalId,
+        summary: `Verified blood group ${verifiedGroup} via ${verificationMethod} for ${donor.name} (prev: ${previousGroup})`,
+      });
+
+      res.json({
+        message: `Successfully verified donor blood group as ${verifiedGroup}`,
+        donor: {
+          id: donor._id,
+          name: donor.name,
+          bloodGroup: donor.bloodGroup,
+          bloodGroupSelfReported: donor.bloodGroupSelfReported,
+          bloodGroupVerified: donor.bloodGroupVerified,
+          bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+          correctionRequest: donor.correctionRequest,
+          verificationHistory: donor.verificationHistory,
+          qrCode: donor.qrCode,
+        },
+      });
+    } catch (err) {
+      console.error('Error verifying donor blood group:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
 // ==================== GET ALL DONORS (admin only, paginated) ====================
-// Query: ?page=1&limit=20&search=&bloodGroup=&eligibility=
+// Query: ?page=1&limit=20&search=&bloodGroup=&eligibility=&verificationStatus=
 // Returns { data, page, limit, total, totalPages, stats } where stats reflect
 // the same filter so the summary cards stay in sync with the results.
 // Staff can view the donor pool too (they record donations); only donor tokens
@@ -408,6 +593,7 @@ router.get("/", auth, allowRoles("staff", "admin", "superadmin"), async (req, re
     if (req.query.bloodGroup) filter.bloodGroup = req.query.bloodGroup;
     if (req.query.eligibility) filter.eligibilityStatus = req.query.eligibility;
     if (req.query.homeHospital) filter.homeHospitalId = req.query.homeHospital;
+    if (req.query.verificationStatus) filter.bloodGroupVerificationStatus = req.query.verificationStatus;
     if (req.query.from || req.query.to) {
       filter.createdAt = {};
       if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
@@ -510,7 +696,26 @@ router.put("/:donorId", auth, async (req, res) => {
     };
 
     if (name !== undefined) updateData.name = name;
-    if (bloodGroup !== undefined) updateData.bloodGroup = bloodGroup;
+    if (bloodGroup !== undefined && bloodGroup !== existingDonor.bloodGroup) {
+      const prevGroup = existingDonor.bloodGroupVerified || existingDonor.bloodGroupSelfReported || existingDonor.bloodGroup;
+      existingDonor.verificationHistory.push({
+        verifiedBy: req.user._id,
+        verifiedAt: new Date(),
+        verificationMethod: req.body.verificationMethod || 'prior_lab_record',
+        verifiedGroup: bloodGroup,
+        previousGroup: prevGroup,
+        hospitalId: req.user.hospitalId,
+        reason: 'Administrative / laboratory clinical update',
+        notes: notes || 'Updated via donor record update',
+      });
+      existingDonor.bloodGroupVerified = bloodGroup;
+      existingDonor.bloodGroup = bloodGroup;
+      existingDonor.bloodGroupVerificationStatus = 'verified';
+      updateData.verificationHistory = existingDonor.verificationHistory;
+      updateData.bloodGroupVerified = bloodGroup;
+      updateData.bloodGroup = bloodGroup;
+      updateData.bloodGroupVerificationStatus = 'verified';
+    }
     if (location !== undefined) updateData.location = location;
     if (dateOfBirth !== undefined) updateData.dateOfBirth = dateOfBirth;
     if (gender !== undefined) updateData.gender = gender;

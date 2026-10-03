@@ -10,8 +10,9 @@ const { sendEmail, buildSosAlertEmail, buildDonorSosEmail } = require('./notific
 
 // Email the admins of hospitals near an SOS so they can mobilise stock. Best-
 // effort and never throws — admin alerting must not break the SOS itself.
-async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
+async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm, options = {}) {
   try {
+    const isPublic = options.tier === 'public';
     let nearby = [];
     if (lat != null && lon != null) {
       try {
@@ -29,7 +30,6 @@ async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
     }
 
     // Alert admins associated with nearby hospitals OR system superadmins.
-    // If no hospital is within radiusKm, fallback to alerting all active admins/superadmins.
     let adminQuery = {
       role: { $in: ['admin', 'superadmin'] },
       isActive: true,
@@ -48,18 +48,22 @@ async function alertNearbyHospitalAdmins(bloodGroup, lat, lon, radiusKm) {
     if (admins.length > 0) {
       const e = buildSosAlertEmail({ bloodGroup, radiusKm, lat, lon });
       for (const a of admins) {
-        if (a.email) sendEmail(a.email, e.subject, e.text, e.html).catch(() => {});
+        if (a.email) sendEmail(a.email, isPublic ? `[PUBLIC BYSTANDER SOS] ${e.subject}` : e.subject, e.text, e.html).catch(() => {});
       }
-      console.log(`📧 SOS: alerted ${admins.length} hospital admin/superadmin(s) near the request`);
+      console.log(`📧 SOS: alerted ${admins.length} hospital admin/superadmin(s) near the request (tier: ${options.tier || 'clinical'})`);
     }
 
     // If an admin WhatsApp phone is configured in .env, send a direct WhatsApp alert too
     const adminPhone = process.env.ADMIN_WHATSAPP_PHONE;
     if (adminPhone) {
       const mapUrl = lat != null && lon != null ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+      const alertHeader = isPublic
+        ? `🚨 *PUBLIC BYSTANDER SOS — TRIAGE REQUIRED* 🚨\n\nA bystander requested *${bloodGroup}* blood.`
+        : `🚨 *ADMIN ALERT — CLINICAL SOS* 🚨\n\nAn authorized clinical emergency SOS for *${bloodGroup}* blood was triggered.`;
+
       await dispatchWhatsAppMessage(
         adminPhone,
-        `🚨 *ADMIN ALERT — EMERGENCY SOS* 🚨\n\nAn emergency SOS for *${bloodGroup}* blood was triggered near coordinates (${lat ?? 'N/A'}, ${lon ?? 'N/A'}).\n\n${mapUrl ? `📍 Location: ${mapUrl}\n` : ''}Eligible donors are being alerted. Please monitor on your dashboard: /dashboard/sos`
+        `${alertHeader}\n\n📍 Location: ${mapUrl || 'N/A'}\n📞 Caller Phone: ${options.userPhone || 'N/A'}\n${isPublic ? '⚠️ Please contact caller for triage: /dashboard/sos' : 'Eligible donors are being alerted: /dashboard/sos'}`
       ).catch((err) => console.warn('Admin WhatsApp SOS dispatch warning:', err.message));
     }
   } catch (err) {
@@ -130,104 +134,17 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15) {
-  console.log(`🚨 SOS TRIGGERED: ${bloodGroup} needed at (${userLat}, ${userLon})`);
+async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15, extraData = {}) {
+  const isPublicTier = extraData.tier === 'public';
+  const tier = isPublicTier ? 'public' : 'clinical';
+
+  console.log(`🚨 SOS TRIGGERED [${tier.toUpperCase()} TIER]: ${bloodGroup} needed at (${userLat}, ${userLon})`);
   console.log('Using Twilio from number:', process.env.TWILIO_WHATSAPP_NUMBER);
 
-  // Alert every donor whose blood is COMPATIBLE with the patient's need
-  // (e.g. an A+ patient can receive from A+, A-, O+, O-), not just exact match.
-  const compatibleGroups = getCompatibleDonors(bloodGroup);
-  const donors = await Donor.find({
-    bloodGroup: { $in: compatibleGroups.length ? compatibleGroups : [bloodGroup] },
-    eligibilityStatus: 'eligible',
-    sosOptIn: true, // respect donors who opted out of SOS alerts
-  });
+  // Generate a clean trackable reference ID if not supplied
+  const referenceId = extraData.referenceId || `SOS-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-  const withDistance = donors
-    .map(donor => ({
-      ...donor.toObject(),
-      distance: haversineDistance(
-        userLat, userLon,
-        donor.location.coordinates[1],
-        donor.location.coordinates[0]
-      ),
-    }))
-    .sort((a, b) => a.distance - b.distance);
-
-  // Auto-widen the search radius until donors are found (emergency), up to a cap.
-  const tiers = Array.from(new Set([radiusKm, 50, 150].filter((r) => r >= radiusKm)))
-    .sort((a, b) => a - b);
-  let effectiveRadius = radiusKm;
-  let donorsWithDistance = [];
-  for (const r of tiers) {
-    effectiveRadius = r;
-    donorsWithDistance = withDistance.filter((d) => d.distance <= r);
-    if (donorsWithDistance.length > 0) break;
-  }
-
-  console.log(`📍 Found ${donorsWithDistance.length} eligible donors within ${effectiveRadius}km`);
-
-  // Persist the SOS event up front so alert outcomes can be recorded.
-  const sos = new SOSRequest({
-    bloodGroup,
-    userLocation: { lat: userLat, lon: userLon },
-    userPhone: normalizePhone(userPhone),
-    radiusKm: effectiveRadius,
-    status: 'pending',
-  });
-
-  let alertedCount = 0;
-  for (const donor of donorsWithDistance) {
-    const donorPhone = normalizePhone(donor.phone);
-    try {
-      console.log(`📨 Sending SOS to: ${donorPhone}`);
-      const body = `🚨 *URGENT SOS - BLOOD DONATION NEEDED* 🚨\n\nA patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`;
-
-      const dispatchResult = await dispatchWhatsAppMessage(donorPhone, body);
-      if (dispatchResult.sent) {
-        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
-        alertedCount++;
-        console.log(`✅ SOS WhatsApp sent to: ${donorPhone}`);
-      } else {
-        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
-        console.warn(`❌ SOS dispatch to ${donorPhone} failed:`, dispatchResult.reason || dispatchResult.error);
-      }
-
-      // Dual-dispatch: Also send urgent email if donor has email on file
-      if (donor.email) {
-        const emailData = buildDonorSosEmail({
-          donorName: donor.name,
-          donorGroup: donor.bloodGroup,
-          bloodGroup,
-          distanceKm: donor.distance,
-          lat: userLat,
-          lon: userLon,
-        });
-        sendEmail(donor.email, emailData.subject, emailData.text, emailData.html)
-          .then((res) => {
-            if (res.sent) console.log(`📧 SOS Email sent to: ${donor.email}`);
-            else console.warn(`⚠️ SOS Email to ${donor.email} not sent:`, res.reason || res.error);
-          })
-          .catch((err) => console.error(`❌ Failed to send SOS email to ${donor.email}:`, err.message));
-      }
-
-      // Track alert stats on the donor record.
-      await Donor.updateOne(
-        { _id: donor._id },
-        { $inc: { sosAlertCount: 1 }, $set: { lastSosAlert: new Date() } }
-      );
-    } catch (err) {
-      sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
-      console.error(`❌ Failed to send SOS to ${donorPhone}:`, err.message);
-    }
-  }
-
-  await sos.save();
-
-  // Also alert the admins of nearby hospitals (best-effort, fire-and-forget).
-  alertNearbyHospitalAdmins(bloodGroup, userLat, userLon, effectiveRadius);
-
-  // Compute nearest hospital so the patient / web interface can display immediate contact info
+  // Compute nearest hospital up front so caller and triage teams have it immediately
   let nearestHospital = null;
   if (userLat != null && userLon != null) {
     try {
@@ -257,10 +174,152 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
     }
   }
 
+  // ==============================================================
+  // TIER 2: PUBLIC / BYSTANDER SOS (UNVERIFIED)
+  // Does NOT broadcast to voluntary donors directly.
+  // Routes to nearest hospital emergency triage & ambulance dispatch.
+  // ==============================================================
+  if (isPublicTier) {
+    const sos = new SOSRequest({
+      bloodGroup,
+      referenceId,
+      tier: 'public',
+      authCode: undefined,
+      hospitalTriageStatus: 'pending_verification',
+      userLocation: { lat: userLat, lon: userLon },
+      userPhone: normalizePhone(userPhone),
+      radiusKm,
+      status: 'pending',
+    });
+    await sos.save();
+
+    // Alert nearest hospital admins and emergency teams for immediate triage
+    alertNearbyHospitalAdmins(bloodGroup, userLat, userLon, radiusKm, {
+      tier: 'public',
+      userPhone: normalizePhone(userPhone),
+    });
+
+    console.log(`🏥 Public SOS created: ${referenceId} -> Routed to nearest hospital (${nearestHospital?.name || 'Local'}) for triage`);
+
+    return {
+      sosId: sos._id,
+      referenceId: sos.referenceId,
+      tier: 'public',
+      bloodGroup,
+      userLocation: { lat: userLat, lon: userLon },
+      radiusKm,
+      widened: false,
+      donorsFound: 0,
+      donorsAlerted: 0,
+      nearestHospital,
+      message: 'Nearest hospital emergency department has been alerted for clinical triage. Please call them directly or stand by for contact.',
+    };
+  }
+
+  // ==============================================================
+  // TIER 1: CLINICAL SOS (VERIFIED VIA DOCTOR PIN OR FACILITY CODE)
+  // Broadcasts immediately to compatible voluntary donors within radius.
+  // ==============================================================
+  const compatibleGroups = getCompatibleDonors(bloodGroup);
+  const targetGroups = compatibleGroups.length ? compatibleGroups : [bloodGroup];
+  const donors = await Donor.find({
+    $or: [
+      { bloodGroupVerified: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
+      { bloodGroup: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
+    ],
+    eligibilityStatus: 'eligible',
+    sosOptIn: true,
+  });
+
+  const withDistance = donors
+    .map(donor => ({
+      ...donor.toObject(),
+      distance: haversineDistance(
+        userLat, userLon,
+        donor.location.coordinates[1],
+        donor.location.coordinates[0]
+      ),
+    }))
+    .sort((a, b) => a.distance - b.distance);
+
+  const tiers = Array.from(new Set([radiusKm, 50, 150].filter((r) => r >= radiusKm)))
+    .sort((a, b) => a - b);
+  let effectiveRadius = radiusKm;
+  let donorsWithDistance = [];
+  for (const r of tiers) {
+    effectiveRadius = r;
+    donorsWithDistance = withDistance.filter((d) => d.distance <= r);
+    if (donorsWithDistance.length > 0) break;
+  }
+
+  console.log(`📍 Found ${donorsWithDistance.length} eligible donors within ${effectiveRadius}km`);
+
+  const sos = new SOSRequest({
+    bloodGroup,
+    referenceId,
+    tier: 'clinical',
+    authCode: extraData.authCode,
+    hospitalTriageStatus: 'verified_broadcasted',
+    doctorName: extraData.doctorName || undefined,
+    doctorPhone: extraData.doctorPhone ? normalizePhone(extraData.doctorPhone) : undefined,
+    hospitalName: extraData.hospitalName || undefined,
+    componentNeeded: extraData.componentNeeded || 'WHOLE_BLOOD',
+    userLocation: { lat: userLat, lon: userLon },
+    userPhone: normalizePhone(userPhone),
+    radiusKm: effectiveRadius,
+    status: 'pending',
+  });
+
+  let alertedCount = 0;
+  for (const donor of donorsWithDistance) {
+    const donorPhone = normalizePhone(donor.phone);
+    try {
+      console.log(`📨 Sending SOS to: ${donorPhone}`);
+      const body = `🚨 *URGENT CLINICAL SOS - BLOOD DONATION NEEDED* 🚨\n\nA verified patient near you urgently needs *${bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`;
+
+      const dispatchResult = await dispatchWhatsAppMessage(donorPhone, body);
+      if (dispatchResult.sent) {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
+        alertedCount++;
+        console.log(`✅ SOS WhatsApp sent to: ${donorPhone}`);
+      } else {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+      }
+
+      if (donor.email) {
+        const emailData = buildDonorSosEmail({
+          donorName: donor.name,
+          donorGroup: donor.bloodGroup,
+          bloodGroup,
+          distanceKm: donor.distance,
+          lat: userLat,
+          lon: userLon,
+        });
+        sendEmail(donor.email, emailData.subject, emailData.text, emailData.html).catch(() => {});
+      }
+
+      await Donor.updateOne(
+        { _id: donor._id },
+        { $inc: { sosAlertCount: 1 }, $set: { lastSosAlert: new Date() } }
+      );
+    } catch (err) {
+      sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+    }
+  }
+
+  await sos.save();
+
+  alertNearbyHospitalAdmins(bloodGroup, userLat, userLon, effectiveRadius, {
+    tier: 'clinical',
+    userPhone: normalizePhone(userPhone),
+  });
+
   console.log(`📊 SOS Result: ${alertedCount} of ${donorsWithDistance.length} donors alerted`);
 
   return {
     sosId: sos._id,
+    referenceId: sos.referenceId,
+    tier: 'clinical',
     bloodGroup,
     userLocation: { lat: userLat, lon: userLon },
     radiusKm: effectiveRadius,
@@ -268,6 +327,78 @@ async function triggerSOS(bloodGroup, userLat, userLon, userPhone, radiusKm = 15
     donorsFound: donorsWithDistance.length,
     donorsAlerted: alertedCount,
     nearestHospital,
+    message: `Clinical SOS verified. Alerted ${alertedCount} nearby compatible voluntary donor(s).`,
+  };
+}
+
+// Upgrade a public SOS to a verified clinical broadcast (performed by hospital staff)
+async function verifyAndBroadcastSOS(sosId, user) {
+  const sos = await SOSRequest.findById(sosId);
+  if (!sos) throw new Error('SOS request not found');
+
+  sos.tier = 'clinical';
+  sos.hospitalTriageStatus = 'verified_broadcasted';
+  sos.doctorName = user.name || 'Verified Hospital Staff';
+
+  const userLat = sos.userLocation?.lat;
+  const userLon = sos.userLocation?.lon;
+  const radiusKm = sos.radiusKm || 15;
+  const compatibleGroups = getCompatibleDonors(sos.bloodGroup);
+  const targetGroups = compatibleGroups.length ? compatibleGroups : [sos.bloodGroup];
+
+  const donors = await Donor.find({
+    $or: [
+      { bloodGroupVerified: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
+      { bloodGroup: { $in: targetGroups }, bloodGroupVerificationStatus: 'verified' },
+    ],
+    eligibilityStatus: 'eligible',
+    sosOptIn: true,
+  });
+
+  const withDistance = donors
+    .map(donor => ({
+      ...donor.toObject(),
+      distance: userLat != null && userLon != null
+        ? haversineDistance(userLat, userLon, donor.location.coordinates[1], donor.location.coordinates[0])
+        : 0,
+    }))
+    .sort((a, b) => a.distance - b.distance);
+
+  const tiers = Array.from(new Set([radiusKm, 50, 150].filter((r) => r >= radiusKm))).sort((a, b) => a - b);
+  let effectiveRadius = radiusKm;
+  let donorsWithDistance = [];
+  for (const r of tiers) {
+    effectiveRadius = r;
+    donorsWithDistance = withDistance.filter((d) => d.distance <= r);
+    if (donorsWithDistance.length > 0) break;
+  }
+
+  let alertedCount = 0;
+  for (const donor of donorsWithDistance) {
+    const donorPhone = normalizePhone(donor.phone);
+    try {
+      const body = `🚨 *URGENT CLINICAL SOS - BLOOD DONATION NEEDED* 🚨\n\nA verified patient near you urgently needs *${sos.bloodGroup}* blood — your *${donor.bloodGroup}* is a match.\n\n📍 Distance: ${donor.distance.toFixed(1)}km from you\n\nIf you are available to donate, please reply with *YES* or *NO*.\n\nThank you for potentially saving a life! 🙏`;
+      const dispatchResult = await dispatchWhatsAppMessage(donorPhone, body);
+      if (dispatchResult.sent) {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'alerted' });
+        alertedCount++;
+      } else {
+        sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+      }
+      await Donor.updateOne({ _id: donor._id }, { $inc: { sosAlertCount: 1 }, $set: { lastSosAlert: new Date() } });
+    } catch (err) {
+      sos.donorsAlerted.push({ donorId: donor._id, phone: donorPhone, status: 'failed' });
+    }
+  }
+
+  sos.radiusKm = effectiveRadius;
+  await sos.save();
+
+  return {
+    sosId: sos._id,
+    tier: 'clinical',
+    donorsFound: donorsWithDistance.length,
+    donorsAlerted: alertedCount,
   };
 }
 
@@ -330,4 +461,4 @@ async function processDonorResponse(donorPhone, response) {
   return { success: true, message: `Thank you for your honesty, ${donor.name}.` };
 }
 
-module.exports = { triggerSOS, processDonorResponse };
+module.exports = { triggerSOS, verifyAndBroadcastSOS, processDonorResponse };

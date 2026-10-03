@@ -28,7 +28,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Building2, Plus, Edit, Trash2, MapPin, Phone } from 'lucide-react';
+import { Building2, Plus, Edit, Power, PowerOff, MapPin, Phone, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
 interface Hospital {
@@ -36,6 +36,7 @@ interface Hospital {
   name: string;
   address: string;
   contactPhone: string;
+  isActive?: boolean;
   createdAt: string;
 }
 
@@ -45,8 +46,9 @@ export default function HospitalsPage() {
   const [loading, setLoading] = useState(true);
   const [editingHospital, setEditingHospital] = useState<Hospital | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [hospitalToDelete, setHospitalToDelete] = useState<string | null>(null);
+  const [toggleDialogOpen, setToggleDialogOpen] = useState(false);
+  const [hospitalToToggle, setHospitalToToggle] = useState<Hospital | null>(null);
+  const [toggling, setToggling] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     address: '',
@@ -113,23 +115,25 @@ export default function HospitalsPage() {
     setDialogOpen(true);
   };
 
-  const handleDelete = async () => {
-    if (!hospitalToDelete) return;
+  const handleToggleStatus = async () => {
+    if (!hospitalToToggle) return;
+    setToggling(true);
     try {
-      await apiClient.delete(`/hospitals/${hospitalToDelete}`);
-      toast.success('Hospital deleted successfully');
+      const res = await apiClient.patch(`/hospitals/${hospitalToToggle._id}/toggle-active`);
+      toast.success(res.data.message || 'Hospital status updated');
       fetchHospitals();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Delete failed');
+      toast.error(error.response?.data?.error || 'Failed to update hospital status');
     } finally {
-      setDeleteDialogOpen(false);
-      setHospitalToDelete(null);
+      setToggling(false);
+      setToggleDialogOpen(false);
+      setHospitalToToggle(null);
     }
   };
 
-  const openDeleteDialog = (id: string) => {
-    setHospitalToDelete(id);
-    setDeleteDialogOpen(true);
+  const openToggleDialog = (hospital: Hospital) => {
+    setHospitalToToggle(hospital);
+    setToggleDialogOpen(true);
   };
 
   const openAddDialog = () => {
@@ -195,6 +199,7 @@ export default function HospitalsPage() {
                   <TableHead>Hospital Name</TableHead>
                   <TableHead>Address</TableHead>
                   <TableHead>Contact</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Registered</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -202,7 +207,7 @@ export default function HospitalsPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       <div className="flex items-center justify-center gap-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
                         Loading hospitals...
@@ -211,7 +216,7 @@ export default function HospitalsPage() {
                   </TableRow>
                 ) : hospitals.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       <Building2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground/60" />
                       No hospitals found. Click &quot;Add Hospital&quot; to get started.
                     </TableCell>
@@ -235,27 +240,44 @@ export default function HospitalsPage() {
                         </div>
                       </TableCell>
                       <TableCell>
+                        {hospital.isActive !== false ? (
+                          <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">Active</Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300">Deactivated</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <Badge variant="outline" className="bg-muted/50">
                           {new Date(hospital.createdAt).toLocaleDateString()}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
+                        <div className="flex justify-end items-center gap-1.5">
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => handleEdit(hospital)}
                             className="h-8 w-8 p-0"
+                            title="Edit Hospital Details"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => openDeleteDialog(hospital._id)}
-                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => openToggleDialog(hospital)}
+                            className={`h-8 px-2 text-xs font-medium rounded-md ${
+                              hospital.isActive !== false
+                                ? 'text-amber-700 hover:text-amber-800 hover:bg-amber-50'
+                                : 'text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50'
+                            }`}
+                            title={hospital.isActive !== false ? 'Deactivate Hospital Facility' : 'Reactivate Hospital Facility'}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            {hospital.isActive !== false ? (
+                              <span className="flex items-center gap-1"><PowerOff className="h-3.5 w-3.5" /> Deactivate</span>
+                            ) : (
+                              <span className="flex items-center gap-1"><Power className="h-3.5 w-3.5" /> Activate</span>
+                            )}
                           </Button>
                         </div>
                       </TableCell>
@@ -336,21 +358,31 @@ export default function HospitalsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      {/* Deactivate/Activate Confirmation Dialog */}
+      <Dialog open={toggleDialogOpen} onOpenChange={setToggleDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirm Delete</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this hospital? This will also delete all associated inventory records. This action cannot be undone.
+            <DialogTitle className="flex items-center gap-2">
+              <PowerOff className="h-5 w-5 text-amber-600" />
+              {hospitalToToggle?.isActive !== false ? 'Deactivate Hospital Facility?' : 'Reactivate Hospital Facility?'}
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-xs leading-relaxed">
+              {hospitalToToggle?.isActive !== false
+                ? `Deactivating ${hospitalToToggle?.name} will prevent new appointments, emergency SOS triage, and stock allocation to this facility. To maintain clinical compliance, all historical donor records, blood units, and audit logs remain permanently preserved.`
+                : `Reactivating ${hospitalToToggle?.name} will restore its active status for donor appointments, blood bank inventory, and emergency requisitions.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => setToggleDialogOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" variant="destructive" onClick={handleDelete}>
-              Delete Hospital
+            <Button
+              type="button"
+              disabled={toggling}
+              className={hospitalToToggle?.isActive !== false ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}
+              onClick={handleToggleStatus}
+            >
+              {toggling ? 'Updating…' : hospitalToToggle?.isActive !== false ? 'Confirm Deactivation' : 'Confirm Reactivation'}
             </Button>
           </DialogFooter>
         </DialogContent>

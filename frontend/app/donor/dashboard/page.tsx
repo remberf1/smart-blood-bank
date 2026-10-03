@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast, Toaster } from 'react-hot-toast';
 import apiClient from '../../api/client';
@@ -21,8 +21,25 @@ import {
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 interface DonorProfile {
-  _id: string; name: string; email: string; phone: string; bloodGroup: string;
-  eligibilityStatus: string; lastDonationDate: string | null; sosOptIn: boolean; createdAt: string;
+  _id: string;
+  name: string;
+  email: string;
+  phone: string;
+  bloodGroup: string;
+  bloodGroupSelfReported?: string;
+  bloodGroupVerified?: string | null;
+  bloodGroupVerificationStatus?: 'unverified' | 'pending_verification' | 'verified' | 'rejected';
+  correctionRequest?: {
+    requestedGroup: string;
+    reason: string;
+    requestedAt?: string;
+    status: 'pending' | 'approved' | 'rejected';
+    reviewNotes?: string;
+  };
+  eligibilityStatus: string;
+  lastDonationDate: string | null;
+  sosOptIn: boolean;
+  createdAt: string;
   qrCode?: string;
   ninMasked?: string;
   location?: { type: string; coordinates: [number, number] };
@@ -38,6 +55,7 @@ interface Appointment {
   timeSlot?: string;
   preferredDay?: string;
   preferredWindow?: string;
+  donationType?: 'WHOLE_BLOOD' | 'PLATELET_APHERESIS' | 'PLASMA_APHERESIS';
   status: string;
   notes?: string;
 }
@@ -68,18 +86,54 @@ export default function DonorDashboard() {
     hospitalId: '',
     appointmentDate: '',
     preferredWindow: 'morning',
+    donationType: 'WHOLE_BLOOD',
     notes: '',
   });
   const router = useRouter();
 
-  // Digital Donor Pass & Certificate
+  // Digital Donor Pass & Certificate (Dynamic Rotating QR)
   const [qrOpen, setQrOpen] = useState(false);
   const [certOpen, setCertOpen] = useState(false);
+  const [dynamicQr, setDynamicQr] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number>(60);
+  const [fetchingDynamic, setFetchingDynamic] = useState(false);
+
+  const fetchDynamicPass = useCallback(async () => {
+    try {
+      setFetchingDynamic(true);
+      const res = await apiClient.get('/donor-auth/dynamic-pass');
+      if (res.data?.qrCode) {
+        setDynamicQr(res.data.qrCode);
+        setSecondsLeft(res.data.ttlSeconds || 60);
+      }
+    } catch {
+      // Gracefully fall back to base profile QR if offline
+    } finally {
+      setFetchingDynamic(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!qrOpen) return;
+    fetchDynamicPass();
+    const timer = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          fetchDynamicPass();
+          return 60;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [qrOpen, fetchDynamicPass]);
+
   const handleDownloadPass = () => {
-    if (!donor?.qrCode) return;
+    const qrSrc = dynamicQr || donor?.qrCode;
+    if (!qrSrc) return;
     const link = document.createElement('a');
-    link.href = donor.qrCode;
-    link.download = `Donor-Pass-${(donor.name || 'Donor').replace(/\s+/g, '_')}-${donor.bloodGroup}.png`;
+    link.href = qrSrc;
+    link.download = `Donor-Pass-${(donor?.name || 'Donor').replace(/\s+/g, '_')}-${donor?.bloodGroup || 'Blood'}.png`;
     link.click();
   };
 
@@ -102,6 +156,14 @@ export default function DonorDashboard() {
   const [pwOpen, setPwOpen] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+
+  // Blood group correction request dialog
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [submittingCorrection, setSubmittingCorrection] = useState(false);
+  const [correctionForm, setCorrectionForm] = useState({
+    requestedGroup: 'O+',
+    reason: '',
+  });
 
   const openProfile = () => {
     if (!donor) return;
@@ -174,6 +236,30 @@ export default function DonorDashboard() {
     }
   };
 
+  const handleCorrectionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!correctionForm.reason.trim()) {
+      toast.error('Please provide a medical reason or explanation for this correction.');
+      return;
+    }
+    setSubmittingCorrection(true);
+    try {
+      const res = await apiClient.post('/donor/auth/request-correction', correctionForm);
+      toast.success(res.data.message || 'Correction request submitted!');
+      setDonor((prev) => (prev ? {
+        ...prev,
+        bloodGroupVerificationStatus: 'pending_verification',
+        correctionRequest: res.data.correctionRequest,
+      } : prev));
+      setCorrectionOpen(false);
+      setCorrectionForm({ requestedGroup: donor?.bloodGroup || 'O+', reason: '' });
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to submit correction request');
+    } finally {
+      setSubmittingCorrection(false);
+    }
+  };
+
   const savePassword = async () => {
     if (pwForm.newPassword.length < 8) { toast.error('New password must be at least 8 characters.'); return; }
     if (pwForm.newPassword !== pwForm.confirm) { toast.error('Passwords do not match.'); return; }
@@ -221,10 +307,11 @@ export default function DonorDashboard() {
         hospitalId: formData.hospitalId,
         appointmentDate: formData.appointmentDate ? formData.appointmentDate : undefined,
         preferredWindow: formData.preferredWindow,
+        donationType: formData.donationType,
         notes: formData.notes,
       });
       toast.success('Donation offer submitted! The hospital blood bank will assign your date and time.');
-      setFormData({ hospitalId: '', appointmentDate: '', preferredWindow: 'morning', notes: '' });
+      setFormData({ hospitalId: '', appointmentDate: '', preferredWindow: 'morning', donationType: 'WHOLE_BLOOD', notes: '' });
       await refreshAppointments();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Failed to submit donation offer');
@@ -310,18 +397,35 @@ export default function DonorDashboard() {
                 <p className="text-red-100 text-sm">Welcome back,</p>
                 <h2 className="text-2xl font-bold">{donor.name}</h2>
               </div>
-              <button
-                type="button"
-                onClick={openProfile}
-                title="Wrong entry? Click to edit blood group"
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 transition-all rounded-xl px-4 py-2 text-white border border-white/30 shadow-sm cursor-pointer group"
-              >
-                <Droplet className="h-6 w-6" />
-                <span className="text-2xl font-bold">{donor.bloodGroup}</span>
-                <span className="text-[10px] bg-black/20 group-hover:bg-black/40 px-1.5 py-0.5 rounded ml-1 transition-colors flex items-center gap-0.5">
-                  <Pencil className="h-2.5 w-2.5" /> Edit
-                </span>
-              </button>
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="flex items-center gap-2 bg-white/20 rounded-xl px-4 py-2 text-white border border-white/30 shadow-sm">
+                  <Droplet className="h-6 w-6 text-white" />
+                  <span className="text-2xl font-bold">{donor.bloodGroup}</span>
+                  {donor.bloodGroupVerificationStatus === 'verified' ? (
+                    <span className="text-[10px] bg-emerald-500/90 text-white font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                      ✓ Lab-Verified
+                    </span>
+                  ) : donor.bloodGroupVerificationStatus === 'pending_verification' ? (
+                    <span className="text-[10px] bg-amber-400 text-amber-950 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                      ⏳ Pending Lab Test
+                    </span>
+                  ) : (
+                    <span className="text-[10px] bg-white/30 text-white font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+                      ⚠️ Self-Reported
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCorrectionForm({ requestedGroup: donor.bloodGroup || 'O+', reason: '' });
+                    setCorrectionOpen(true);
+                  }}
+                  className="text-[11px] text-white/90 hover:text-white underline cursor-pointer flex items-center gap-1"
+                >
+                  <Pencil className="h-3 w-3" /> Request Blood Group Correction
+                </button>
+              </div>
             </div>
           </div>
           <CardContent className="p-6">
@@ -378,63 +482,106 @@ export default function DonorDashboard() {
         </Card>
 
         {/* Offer to donate blood (Select hospital, hospital admin assigns time) */}
+        {/* Offer / Booking Card */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CalendarPlus className="h-5 w-5 text-red-500" /> Offer to donate blood
             </CardTitle>
             <p className="text-xs text-gray-500 mt-1">
-              Select the hospital blood bank you wish to donate at. Hospital staff will check clinical capacity and assign your confirmed appointment date and time.
+              Select the hospital blood bank and donation type. Hospital staff will check clinical capacity and assign your confirmed appointment date and time.
             </p>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSchedule} className="space-y-4">
-              <div>
-                <Label>Hospital Blood Bank *</Label>
-                <select
-                  value={formData.hospitalId}
-                  onChange={(e) => setFormData({ ...formData, hospitalId: e.target.value })}
-                  className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
-                  required
-                >
-                  <option value="">Select a hospital</option>
-                  {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} — {h.address}</option>)}
-                </select>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <Label>Preferred day (Optional)</Label>
-                    <span className="text-[11px] text-gray-400">Optional</span>
-                  </div>
-                  <Input
-                    type="date"
-                    min={new Date().toISOString().split('T')[0]}
-                    value={formData.appointmentDate}
-                    onChange={(e) => setFormData({ ...formData, appointmentDate: e.target.value })}
-                    className="mt-1"
-                  />
-                  <p className="text-[11px] text-gray-400 mt-0.5">Leave blank for hospital to assign earliest available slot.</p>
+            {donor.eligibilityStatus === 'deferred' && daysUntilEligible > 0 ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-900 space-y-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Clock className="h-5 w-5 text-amber-600" />
+                  <span>Temporary Post-Donation Deferral</span>
                 </div>
+                <p className="text-xs leading-relaxed text-amber-800">
+                  Thank you for your recent lifesaving donation! Under National Blood Service safety protocols, your body requires a rest and recovery period between donations.
+                </p>
+                <div className="text-xs font-semibold bg-white/80 p-2 rounded border border-amber-200 inline-block">
+                  Next eligible donation date: ~{new Date(Date.now() + daysUntilEligible * 86400000).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })} ({daysUntilEligible} day{daysUntilEligible === 1 ? '' : 's'} remaining)
+                </div>
+              </div>
+            ) : upcoming.length > 0 ? (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-blue-900 space-y-2">
+                <div className="flex items-center gap-2 font-semibold">
+                  <CalendarClock className="h-5 w-5 text-blue-600" />
+                  <span>Active Appointment in Progress</span>
+                </div>
+                <p className="text-xs leading-relaxed text-blue-800">
+                  You already have an active donation appointment booked below ({upcoming[0].status === 'scheduled' ? 'Confirmed appointment' : 'Offer awaiting hospital time assignment'}). Please complete or cancel it before offering another donation.
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleSchedule} className="space-y-4">
                 <div>
-                  <Label>Preferred clinic window</Label>
+                  <Label>Hospital Blood Bank *</Label>
                   <select
-                    value={formData.preferredWindow}
-                    onChange={(e) => setFormData({ ...formData, preferredWindow: e.target.value })}
+                    value={formData.hospitalId}
+                    onChange={(e) => setFormData({ ...formData, hospitalId: e.target.value })}
                     className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+                    required
                   >
-                    <option value="morning">Morning Clinic (8:00 AM – 12:00 PM)</option>
-                    <option value="afternoon">Afternoon Clinic (12:00 PM – 4:00 PM)</option>
-                    <option value="flexible">Flexible (Any time during clinic hours)</option>
+                    <option value="">Select a hospital</option>
+                    {hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} — {h.address}</option>)}
                   </select>
                 </div>
-              </div>
-              <div>
-                <Label>Notes (optional)</Label>
-                <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} placeholder="e.g. First-time donor, coming during lunch break, etc." className="mt-1" />
-              </div>
-              <Button type="submit" disabled={booking}>{booking ? 'Submitting offer…' : 'Submit Donation Offer'}</Button>
-            </form>
+
+                <div>
+                  <Label>Donation Type / Component *</Label>
+                  <select
+                    value={formData.donationType}
+                    onChange={(e) => setFormData({ ...formData, donationType: e.target.value as any })}
+                    className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+                  >
+                    <option value="WHOLE_BLOOD">🩸 Whole Blood (Standard ~450 mL donation, ~10 mins)</option>
+                    <option value="PLATELET_APHERESIS">🟡 Platelets (Apheresis, ~60–90 mins, for cancer &amp; trauma)</option>
+                    <option value="PLASMA_APHERESIS">💧 Plasma (Apheresis, ~45 mins, for burns &amp; shock)</option>
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Whole blood is standard. Apheresis allows donating specific components at equipped tertiary hospitals.
+                  </p>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <Label>Preferred day (Optional)</Label>
+                      <span className="text-[11px] text-gray-400">Optional</span>
+                    </div>
+                    <Input
+                      type="date"
+                      min={new Date().toISOString().split('T')[0]}
+                      value={formData.appointmentDate}
+                      onChange={(e) => setFormData({ ...formData, appointmentDate: e.target.value })}
+                      className="mt-1"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-0.5">Leave blank for hospital to assign earliest available slot.</p>
+                  </div>
+                  <div>
+                    <Label>Preferred clinic window</Label>
+                    <select
+                      value={formData.preferredWindow}
+                      onChange={(e) => setFormData({ ...formData, preferredWindow: e.target.value })}
+                      className="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+                    >
+                      <option value="morning">Morning Clinic (8:00 AM – 12:00 PM)</option>
+                      <option value="afternoon">Afternoon Clinic (12:00 PM – 4:00 PM)</option>
+                      <option value="flexible">Flexible (Any time during clinic hours)</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <Label>Notes (optional)</Label>
+                  <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} placeholder="e.g. First-time donor, coming during lunch break, etc." className="mt-1" />
+                </div>
+                <Button type="submit" disabled={booking}>{booking ? 'Submitting offer…' : 'Submit Donation Offer'}</Button>
+              </form>
+            )}
           </CardContent>
         </Card>
 
@@ -462,6 +609,11 @@ export default function DonorDashboard() {
                             ? new Date(a.assignedDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
                             : a.preferredDay || (a.appointmentDate ? new Date(a.appointmentDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : 'Earliest available')}
                         </span>
+                        {a.donationType && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-800 border border-slate-200">
+                            {a.donationType === 'PLATELET_APHERESIS' ? '🟡 Platelets' : a.donationType === 'PLASMA_APHERESIS' ? '💧 Plasma' : '🩸 Whole Blood'}
+                          </span>
+                        )}
                         {a.assignedTime ? (
                           <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-xs font-bold">
                             ⏰ {a.assignedTime}
@@ -595,20 +747,42 @@ export default function DonorDashboard() {
             </div>
             <div>
               <div className="flex items-center justify-between">
-                <Label>Blood group</Label>
-                <span className="text-[11px] text-muted-foreground">Wrong entry? You can change it here</span>
+                <Label>Blood Group</Label>
+                {donor.bloodGroupVerificationStatus === 'verified' ? (
+                  <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-semibold border border-emerald-200">
+                    ✓ Clinically Verified
+                  </span>
+                ) : donor.bloodGroupVerificationStatus === 'pending_verification' ? (
+                  <span className="text-[10px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full font-semibold border border-amber-200">
+                    ⏳ Pending Lab Check
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full font-medium">
+                    Self-Reported (Unverified)
+                  </span>
+                )}
               </div>
-              <select
-                value={profileForm.bloodGroup}
-                onChange={(e) => setProfileForm({ ...profileForm, bloodGroup: e.target.value })}
-                className="w-full border border-input rounded-md p-2 bg-background focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
-              >
-                {BLOOD_GROUPS.map((bg) => (
-                  <option key={bg} value={bg}>{bg}</option>
-                ))}
-              </select>
+              <div className="mt-1 flex items-center justify-between p-2.5 rounded-lg border bg-muted/40">
+                <div className="flex items-center gap-2">
+                  <Droplet className="h-5 w-5 text-red-600" />
+                  <span className="font-bold text-base text-foreground">{donor.bloodGroup}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs border-red-200 text-red-700 hover:bg-red-50"
+                  onClick={() => {
+                    setProfileOpen(false);
+                    setCorrectionForm({ requestedGroup: donor.bloodGroup || 'O+', reason: '' });
+                    setCorrectionOpen(true);
+                  }}
+                >
+                  Request Correction / Retest
+                </Button>
+              </div>
               <p className="text-[11px] text-muted-foreground mt-1">
-                Updating will refresh your Digital Donor Pass and emergency matching group.
+                To prevent dangerous transfusion mismatches, blood groups cannot be changed directly. A hospital laboratory scientist will confirm your type at your next visit.
               </p>
             </div>
             <div>
@@ -665,6 +839,76 @@ export default function DonorDashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Request Blood Group Correction Dialog */}
+      <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Droplet className="h-5 w-5 text-red-600" /> Request Blood Group Correction
+            </DialogTitle>
+            <DialogDescription>
+              Under clinical safety regulations (NBSC standards), blood group updates require laboratory crossmatch testing.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCorrectionSubmit} className="space-y-4 py-2">
+            <div>
+              <Label className="text-xs font-semibold">Current Recorded Blood Group</Label>
+              <div className="p-2.5 rounded-md bg-muted text-sm font-bold text-foreground mt-1 flex items-center justify-between">
+                <span>{donor.bloodGroup}</span>
+                <span className="text-[11px] font-normal text-muted-foreground">
+                  Status: {donor.bloodGroupVerificationStatus || 'unverified'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold">Requested Correct Blood Group *</Label>
+              <select
+                value={correctionForm.requestedGroup}
+                onChange={(e) => setCorrectionForm({ ...correctionForm, requestedGroup: e.target.value })}
+                className="w-full border border-input rounded-md p-2 bg-background focus:outline-none focus:ring-2 focus:ring-red-500 text-sm mt-1"
+                required
+              >
+                {BLOOD_GROUPS.map((bg) => (
+                  <option key={bg} value={bg}>{bg}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold">Reason / Clinical Context *</Label>
+              <textarea
+                value={correctionForm.reason}
+                onChange={(e) => setCorrectionForm({ ...correctionForm, reason: e.target.value })}
+                rows={3}
+                placeholder="e.g. Previous hospital crossmatch at LUTH confirmed O-negative, or registration typo."
+                className="w-full border border-input rounded-md p-2 bg-background focus:outline-none focus:ring-2 focus:ring-red-500 text-xs mt-1"
+                required
+              />
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 space-y-1">
+              <p className="font-semibold flex items-center gap-1">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Clinical Safety Protocol
+              </p>
+              <p className="text-[11px] leading-relaxed">
+                Submitting this request flags your profile as <strong>Pending Verification</strong>. A hospital laboratory scientist will perform an ABO/Rh confirmatory test when you check in for your next donation.
+              </p>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCorrectionOpen(false)} disabled={submittingCorrection}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={submittingCorrection}>
+                {submittingCorrection ? 'Submitting…' : 'Submit Correction Request'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Change password dialog */}
       <Dialog open={pwOpen} onOpenChange={setPwOpen}>
         <DialogContent className="sm:max-w-md">
@@ -707,11 +951,20 @@ export default function DonorDashboard() {
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col items-center justify-center py-4 space-y-4">
+            {/* Live Anti-Screenshot Rotating Badge */}
+            <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-xs font-medium">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span>Dynamic Anti-Screenshot Pass • Refreshes in {secondsLeft}s</span>
+            </div>
+
             <div className="relative bg-white p-4 rounded-2xl border-2 border-red-100 shadow-sm">
-              {donor.qrCode ? (
+              {(dynamicQr || donor.qrCode) ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={donor.qrCode}
+                  src={dynamicQr || donor.qrCode}
                   alt="Donor QR Code"
                   className="w-56 h-56 object-contain rounded-lg"
                 />
@@ -729,11 +982,28 @@ export default function DonorDashboard() {
               <h3 className="font-bold text-lg text-gray-800">{donor.name}</h3>
               <p className="text-xs text-muted-foreground font-mono">ID: {donor._id}</p>
               {donor.ninMasked && <p className="text-[11px] text-emerald-700 font-mono">NIN: {donor.ninMasked}</p>}
+              
+              <div className="pt-1.5 flex justify-center">
+                {donor.bloodGroupVerificationStatus === 'verified' ? (
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-300 text-[11px] font-semibold gap-1 py-0.5 px-2.5">
+                    <ShieldCheck className="h-3 w-3 text-emerald-600" /> Lab-Verified Blood Type
+                  </Badge>
+                ) : donor.bloodGroupVerificationStatus === 'pending_verification' ? (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[11px] font-semibold gap-1 py-0.5 px-2.5">
+                    <Clock className="h-3 w-3 text-amber-600" /> Lab Verification Pending
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-amber-50/70 text-amber-700 border-amber-200 text-[11px] font-normal gap-1 py-0.5 px-2.5">
+                    <AlertTriangle className="h-3 w-3 text-amber-600" /> Self-Reported (Confirmatory Test Required)
+                  </Badge>
+                )}
+              </div>
+
               <div className="pt-2">{eligibilityBadge}</div>
             </div>
 
-            <p className="text-xs text-gray-400 max-w-xs">
-              Staff scan this QR code to verify your blood type, check donation eligibility, and record units.
+            <p className="text-[11px] text-gray-500 max-w-xs text-center leading-relaxed">
+              Hospital scanners require a live rotating token. Static screenshots will be rejected by clinical staff for patient safety.
             </p>
           </div>
           <DialogFooter className="sm:justify-between flex-row gap-2">

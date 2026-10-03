@@ -109,6 +109,17 @@ def _start_date(s: str | None) -> dt.date:
         return dt.date.today()
 
 
+@app.get("/")
+def root():
+    return {
+        "service": "Smart Blood Bank — Demand Prediction ML API",
+        "status": "ok",
+        "health": "/health",
+        "model_info": "/model/info",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model_loaded": _booster is not None,

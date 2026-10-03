@@ -22,9 +22,24 @@ const bloodBatchSchema = new mongoose.Schema({
   expiryDate: { type: Date, required: true },
   status: {
     type: String,
-    enum: ['available', 'allocated', 'expired', 'discarded'],
+    enum: ['available', 'reserved', 'allocated', 'in_transit', 'expired', 'discarded', 'transfused'],
     default: 'available',
   },
+  discardReason: {
+    type: String,
+    enum: [
+      'expired',
+      'broken_seal',
+      'positive_nat',
+      'hemolyzed',
+      'clotted',
+      'cold_chain_breakage',
+      'other',
+    ],
+  },
+  discardNotes: { type: String },
+  discardedAt: { type: Date },
+  discardedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 });
 
 // Supports FEFO selection, component segregation, and the expiry sweep.

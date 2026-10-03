@@ -9,16 +9,21 @@
 // default to https:// when no scheme is given, and strip any trailing slash.
 function normalizeUrl(raw) {
   if (!raw) return '';
-  let withScheme = raw;
-  if (!/^https?:\/\//i.test(raw)) {
-    const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?/i.test(raw);
-    withScheme = isLocal ? `http://${raw}` : `https://${raw}`;
+  let cleaned = String(raw).trim();
+  // If it's a bare service name like "sbb-ml" without dots, append .onrender.com
+  if (!cleaned.includes('.') && !cleaned.includes(':') && !/^https?:\/\//i.test(cleaned)) {
+    cleaned = `${cleaned}.onrender.com`;
+  }
+  let withScheme = cleaned;
+  if (!/^https?:\/\//i.test(cleaned)) {
+    const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?/i.test(cleaned);
+    withScheme = isLocal ? `http://${cleaned}` : `https://${cleaned}`;
   }
   return withScheme.replace(/\/+$/, '');
 }
 
-const ML_SERVICE_URL = normalizeUrl(process.env.ML_SERVICE_URL || '');
-const TIMEOUT_MS = Number(process.env.ML_TIMEOUT_MS) || 4000;
+const ML_SERVICE_URL = normalizeUrl(process.env.ML_SERVICE_URL || 'https://sbb-ml.onrender.com');
+const TIMEOUT_MS = Number(process.env.ML_TIMEOUT_MS) || 15000;
 
 const isEnabled = () => Boolean(ML_SERVICE_URL);
 

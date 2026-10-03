@@ -77,8 +77,8 @@ function StockVsNeedChart({ groups }: { groups: GroupForecast[] }) {
                   <div className="h-full rounded-full" style={{ width: pctOf(g.expectedHorizon), background: C_NEED }} />
                 </div>
               </div>
-              <span className={`w-16 shrink-0 text-right text-xs ${short ? 'text-red-600 font-semibold' : 'text-muted-foreground'}`}>
-                {short ? `−${g.expectedHorizon - g.currentStock} u` : 'covered'}
+              <span className={`w-20 shrink-0 text-right text-xs ${short ? 'text-red-600 font-semibold' : g.coverageDays != null && g.coverageDays > 42 ? 'text-amber-600 font-semibold' : 'text-muted-foreground'}`}>
+                {short ? `−${g.expectedHorizon - g.currentStock} u` : g.coverageDays != null && g.coverageDays > 42 ? 'overstocked' : 'covered'}
               </span>
             </div>
           );
@@ -192,19 +192,38 @@ export default function ForecastPage() {
           )}
         </div>
       ) : (
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground">
-          <Info className="h-4 w-4 shrink-0" />
-          Heuristic forecast (statistical baseline — the ML service is offline).
+        <div className="flex items-start gap-3 rounded-xl border-2 border-amber-500/50 bg-amber-500/10 p-4 text-sm text-amber-950 dark:text-amber-100 shadow-xs">
+          <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-semibold text-amber-900 ">
+              ML Forecasting Service Offline — Operating on Heuristic Baseline
+            </p>
+            <p className="text-xs text-amber-800/90  leading-relaxed">
+              Demand estimates are derived from historical 7-day moving averages rather than the predictive XGBoost model.
+              Verify critical procurement decisions with blood bank supervisory staff until the ML inference engine is reconnected.
+            </p>
+          </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Kpi
           icon={AlertTriangle}
           label="Groups at risk"
           value={data.atRiskGroups.length}
           sub={data.atRiskGroups.length ? data.atRiskGroups.join(', ') : 'All groups healthy'}
           tone={data.atRiskGroups.length ? 'danger' : 'primary'}
+        />
+        <Kpi
+          icon={PackagePlus}
+          label="Overstocked (Expiry Risk)"
+          value={data.groups.filter((g) => g.coverageDays != null && g.coverageDays > 42).length}
+          sub={
+            data.groups.filter((g) => g.coverageDays != null && g.coverageDays > 42).length > 0
+              ? `${data.groups.filter((g) => g.coverageDays != null && g.coverageDays > 42).map((g) => g.bloodGroup).join(', ')} (>42d shelf life)`
+              : 'Zero units exceeding 42d shelf life'
+          }
+          tone={data.groups.filter((g) => g.coverageDays != null && g.coverageDays > 42).length > 0 ? 'amber' : 'primary'}
         />
         <Kpi icon={PackagePlus} label="Suggested restock" value={`${data.totalSuggestedRestock} u`} sub="across all groups" tone="amber" />
         <Kpi icon={TrendingUp} label="Horizon" value={`${data.horizonDays} days`} sub="forecast window" />
@@ -239,18 +258,34 @@ export default function ForecastPage() {
                     <tr key={g.bloodGroup} className="border-b border-border last:border-0 hover:bg-muted/40">
                       <td className="p-4 font-bold text-foreground">{g.bloodGroup}</td>
                       <td className="p-4">
-                        <Badge className={meta.className}>{meta.label}</Badge>
-                        {g.forecast.confidence === 'low' && g.riskLevel !== 'none' && (
-                          <span className="ml-2 text-xs text-muted-foreground">low data</span>
-                        )}
+                        <div className="flex flex-col gap-1 items-start">
+                          <Badge className={meta.className}>{meta.label}</Badge>
+                          {g.coverageDays != null && g.coverageDays > 42 && (
+                            <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] px-1.5 py-0 font-normal">
+                              Overstocked
+                            </Badge>
+                          )}
+                          {g.forecast.confidence === 'low' && g.riskLevel !== 'none' && (
+                            <span className="text-xs text-muted-foreground">low data</span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-4 text-right text-foreground">{g.currentStock} u</td>
                       <td className="p-4 text-right text-foreground">
                         {g.expectedHorizon} u
                         <span className="block text-xs text-muted-foreground">~{g.forecast.dailyMean}/day</span>
                       </td>
-                      <td className="p-4 text-right text-muted-foreground">
-                        {g.coverageDays == null ? '—' : `${g.coverageDays}d`}
+                      <td className="p-4 text-right">
+                        {g.coverageDays == null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : g.coverageDays > 42 ? (
+                          <div>
+                            <span className="font-semibold text-amber-700">{g.coverageDays}d</span>
+                            <span className="block text-[10px] text-amber-600 font-medium">(&gt;42d shelf life)</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">{g.coverageDays}d</span>
+                        )}
                       </td>
                       <td className="p-4 text-right">
                         {g.suggestedRestock > 0 ? (

@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const QRCode = require('qrcode');
 const Donor = require('../models/Donor');
 const { validate } = require('../middleware/validate');
-const { forgotPasswordSchema, resetPasswordSchema } = require('../validators/schemas');
+const { forgotPasswordSchema, resetPasswordSchema, donorCorrectionRequestSchema } = require('../validators/schemas');
 const { sendEmail, buildPasswordResetEmail } = require('../services/notificationService');
 const { generateResetToken, hashToken } = require('../utils/passwordReset');
 const authDonor = require('../middleware/authDonor');
@@ -133,6 +133,51 @@ router.get('/profile', authDonor, async (req, res) => {
   }
 });
 
+// ==================== GET DYNAMIC ROTATING PASS (Anti-Screenshot) ====================
+router.get('/dynamic-pass', authDonor, async (req, res) => {
+  try {
+    const donor = req.donor;
+    const now = Math.floor(Date.now() / 1000);
+    const ttlSeconds = 60;
+
+    const qrToken = jwt.sign(
+      {
+        donorId: donor._id,
+        type: 'donor-verify',
+        rot: Math.random().toString(36).substring(2, 9),
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '120s' } // 60s active + 60s grace scan window
+    );
+
+    const qrCodeDataUrl = await QRCode.toDataURL(qrToken, {
+      errorCorrectionLevel: 'H',
+      margin: 1,
+      width: 320,
+    });
+
+    res.json({
+      qrCode: qrCodeDataUrl,
+      token: qrToken,
+      ttlSeconds,
+      expiresAt: (now + ttlSeconds) * 1000,
+      donor: {
+        name: donor.name,
+        bloodGroup: donor.bloodGroup,
+        bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus || 'unverified',
+        bloodGroupVerified: donor.bloodGroupVerified,
+        bloodGroupSelfReported: donor.bloodGroupSelfReported,
+        eligibilityStatus: donor.eligibilityStatus,
+        deferralReason: donor.deferralReason,
+        lastDonationDate: donor.lastDonationDate,
+      },
+    });
+  } catch (err) {
+    console.error('Error generating dynamic pass:', err);
+    res.status(500).json({ error: 'Failed to generate dynamic pass' });
+  }
+});
+
 // ==================== UPDATE OWN PROFILE (Protected) ====================
 router.put('/profile', authDonor, async (req, res) => {
   try {
@@ -141,10 +186,16 @@ router.put('/profile', authDonor, async (req, res) => {
 
     const VALID_BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
     if (bloodGroup && VALID_BLOOD_GROUPS.includes(bloodGroup) && bloodGroup !== donor.bloodGroup) {
+      if (donor.bloodGroupVerificationStatus === 'verified') {
+        return res.status(403).json({
+          error: 'Your blood group has been verified by an accredited laboratory and cannot be altered directly. Please submit a Blood Group Correction Request for lab re-testing.'
+        });
+      }
+      donor.bloodGroupSelfReported = bloodGroup;
       donor.bloodGroup = bloodGroup;
       try {
         const qrToken = jwt.sign(
-          { donorId: donor._id, type: 'donor-verify', bloodGroup },
+          { donorId: donor._id, type: 'donor-verify', bloodGroup, verified: false },
           process.env.JWT_SECRET
         );
         donor.qrCode = await QRCode.toDataURL(qrToken, {
@@ -215,6 +266,10 @@ router.put('/profile', authDonor, async (req, res) => {
         email: donor.email,
         phone: donor.phone,
         bloodGroup: donor.bloodGroup,
+        bloodGroupSelfReported: donor.bloodGroupSelfReported,
+        bloodGroupVerified: donor.bloodGroupVerified,
+        bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+        correctionRequest: donor.correctionRequest,
         ninMasked: donor.ninMasked,
         allergies: donor.allergies,
         eligibilityStatus: donor.eligibilityStatus,
@@ -225,6 +280,38 @@ router.put('/profile', authDonor, async (req, res) => {
     });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== REQUEST BLOOD GROUP CORRECTION (Protected) ====================
+router.post('/request-correction', authDonor, validate(donorCorrectionRequestSchema), async (req, res) => {
+  try {
+    const donor = req.donor;
+    const { requestedGroup, reason } = req.body;
+
+    donor.bloodGroupVerificationStatus = 'pending_verification';
+    donor.correctionRequest = {
+      requestedGroup,
+      reason: reason.trim(),
+      requestedAt: new Date(),
+      status: 'pending',
+    };
+    await donor.save();
+
+    logAudit({ _id: donor._id, role: 'donor', name: donor.name }, 'donor.correction_request', {
+      entity: 'Donor',
+      entityId: donor._id,
+      summary: `Donor requested blood group correction to ${requestedGroup} (reason: ${reason})`,
+    });
+
+    res.json({
+      message: 'Correction request submitted. An accredited hospital laboratory scientist will perform confirmatory grouping at your next visit.',
+      correctionRequest: donor.correctionRequest,
+      bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+    });
+  } catch (err) {
+    console.error('Error submitting correction request:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -10,6 +10,52 @@ const donorSchema = new mongoose.Schema({
     enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
     required: true,
   },
+  // --- Blood Group Verification & Safety Governance ---
+  bloodGroupSelfReported: {
+    type: String,
+    enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "UNKNOWN"],
+    default: "UNKNOWN",
+  },
+  bloodGroupVerified: {
+    type: String,
+    enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
+    default: null,
+  },
+  bloodGroupVerificationStatus: {
+    type: String,
+    enum: ['unverified', 'pending_verification', 'verified', 'rejected'],
+    default: 'unverified',
+  },
+  correctionRequest: {
+    requestedGroup: {
+      type: String,
+      enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
+    },
+    reason: { type: String, trim: true },
+    requestedAt: { type: Date },
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending',
+    },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    reviewedAt: { type: Date },
+    reviewNotes: { type: String, trim: true },
+  },
+  verificationHistory: [{
+    verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    verifiedAt: { type: Date, default: Date.now },
+    verificationMethod: {
+      type: String,
+      enum: ['tube_agglutination', 'gel_card', 'slide_test', 'prior_lab_record', 'automated_analyzer'],
+      required: true,
+    },
+    verifiedGroup: { type: String, required: true },
+    previousGroup: { type: String },
+    hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: "Hospital" },
+    reason: { type: String },
+    notes: { type: String },
+  }],
   location: {
     type: { type: String, enum: ["Point"], default: "Point" },
     coordinates: { type: [Number], required: true },
@@ -72,6 +118,14 @@ donorSchema.index({ location: "2dsphere" });
 donorSchema.pre("save", async function () {
   // Update timestamp
   this.updatedAt = Date.now();
+
+  // Blood group verification sync
+  if (this.bloodGroupVerified) {
+    this.bloodGroup = this.bloodGroupVerified;
+    this.bloodGroupVerificationStatus = 'verified';
+  } else if (!this.bloodGroupSelfReported || this.bloodGroupSelfReported === 'UNKNOWN') {
+    if (this.bloodGroup) this.bloodGroupSelfReported = this.bloodGroup;
+  }
 
   // Auto-mask NIN if provided
   if (this.isModified("nin") && this.nin) {

@@ -34,12 +34,9 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      # ML service URL is wired automatically from the sbb-ml service host.
+      # ML service URL: direct public HTTPS endpoint on Render
       - key: ML_SERVICE_URL
-        fromService:
-          name: sbb-ml
-          type: web
-          property: host
+        value: https://sbb-ml.onrender.com
       # Secrets / per-deploy values — set these in the Render dashboard:
       - key: MONGODB_URI
         sync: false

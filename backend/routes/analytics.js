@@ -55,4 +55,12 @@ router.get('/wastage', auth, async (req, res) => {
   }
 });
 
+router.get('/request-funnel', auth, async (req, res) => {
+  try {
+    res.json(await analytics.requestFunnel(resolveScope(req), clampDays(req.query.days)));
+  } catch (err) {
+    console.error(err); res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

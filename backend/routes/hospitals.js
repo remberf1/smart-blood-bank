@@ -4,6 +4,7 @@ const Hospital = require('../models/Hospital');
 const Inventory = require('../models/Inventory'); // To check if hospital has inventory before deleting
 const { auth, isAdmin, isSuperAdmin } = require('../middleware/auth');
 const { canAccessHospital } = require('../middleware/roles');
+const { logAudit } = require('../services/auditService');
 
 // Contact phone: allow +, spaces, dashes and parentheses as formatting, but the
 // digits must be 10–14 and there must be no letters. Rejects the "too long /
@@ -91,28 +92,37 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
-// ==================== DELETE HOSPITAL (superadmin only) ====================
-router.delete('/:id', auth, isSuperAdmin, async (req, res) => {
+// ==================== TOGGLE DEACTIVATE/ACTIVATE HOSPITAL (superadmin only) ====================
+router.patch('/:id/toggle-active', auth, isSuperAdmin, async (req, res) => {
   try {
-    // First, check if hospital has any inventory
-    const inventoryCount = await Inventory.countDocuments({ hospitalId: req.params.id });
-    
-    if (inventoryCount > 0) {
-      return res.status(400).json({ 
-        error: `Cannot delete hospital. It has ${inventoryCount} inventory record(s). Delete inventory first.` 
-      });
-    }
-    
-    const hospital = await Hospital.findByIdAndDelete(req.params.id);
-    if (!hospital) {
-      return res.status(404).json({ error: 'Hospital not found' });
-    }
-    
-    res.json({ message: 'Hospital deleted successfully', hospital: { name: hospital.name } });
+    const hospital = await Hospital.findById(req.params.id);
+    if (!hospital) return res.status(404).json({ error: 'Hospital not found' });
+
+    hospital.isActive = hospital.isActive === false ? true : false;
+    hospital.deactivatedAt = hospital.isActive ? undefined : new Date();
+    await hospital.save();
+
+    logAudit(req.user, hospital.isActive ? 'hospital.activate' : 'hospital.deactivate', {
+      entity: 'Hospital',
+      entityId: hospital._id,
+      summary: `${hospital.isActive ? 'Activated' : 'Deactivated'} facility ${hospital.name}`,
+    });
+
+    res.json({
+      message: `Hospital ${hospital.name} ${hospital.isActive ? 'activated' : 'deactivated'} successfully`,
+      hospital,
+    });
   } catch (err) {
-    console.error('Error deleting hospital:', err);
+    console.error('Error toggling hospital active state:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// ==================== DELETE HOSPITAL (Hard Delete Prohibited) ====================
+router.delete('/:id', auth, isSuperAdmin, async (req, res) => {
+  return res.status(400).json({
+    error: 'Hard deletion is strictly prohibited in healthcare compliance to prevent orphaning donor records, clinical requisitions, and audit logs. Please toggle "Deactivate" instead.',
+  });
 });
 
 // ==================== GET HOSPITAL WITH ITS INVENTORY ====================

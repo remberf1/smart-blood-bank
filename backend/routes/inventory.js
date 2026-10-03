@@ -8,6 +8,7 @@ const { canAccessHospital, allowRoles } = require('../middleware/roles');
 const { addBloodUnits, removeBloodUnits, refreshBloodInventory, expireDueBatches } = require('../services/inventoryService');
 const { getCompatibleDonors, compatibilityIndex } = require('../utils/bloodCompatibility');
 const { allocateBlood, allocateOxygen } = require('../services/allocationService');
+const { logAudit } = require('../services/auditService');
 
 // POST - Add inventory (admin/superadmin only; staff adjust stock via donations & transfers)
 router.post('/', auth, isAdmin, async (req, res) => {
@@ -21,6 +22,11 @@ router.post('/', auth, isAdmin, async (req, res) => {
     // Blood is tracked as dated batches; adding stock creates a batch with an
     // expiry and refreshes the Inventory cache.
     if (resourceType === 'blood') {
+      if (req.user.role === 'superadmin') {
+        return res.status(403).json({
+          error: "Separation of Duties violation: Super Admin cannot manually inject clinical blood units. Blood inventory must originate from donor phlebotomy or verified inter-hospital transfer.",
+        });
+      }
       if (!bloodGroup) return res.status(400).json({ error: 'bloodGroup is required for blood' });
       const cType = componentType || 'PACKED_RED_CELLS';
       await addBloodUnits({ hospitalId, bloodGroup, componentType: cType, units: units || 0, source: 'manual' });
@@ -186,13 +192,103 @@ router.put('/oxygen/:inventoryId', auth, isAdmin, async (req, res) => {
   }
 });
 
-// DELETE - Remove inventory (admin/superadmin only; staff can add/update, not delete)
+// POST - Discard / waste blood units with a mandatory clinical reason code
+router.post('/blood/discard', auth, allowRoles('admin', 'superadmin', 'staff'), async (req, res) => {
+  try {
+    const { inventoryId, hospitalId: reqHospitalId, bloodGroup, componentType, units, reason, notes } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({ error: 'A mandatory clinical reason code is required to discard blood units.' });
+    }
+    const validReasons = ['expired', 'broken_seal', 'positive_nat', 'hemolyzed', 'clotted', 'cold_chain_breakage', 'other'];
+    if (!validReasons.includes(reason)) {
+      return res.status(400).json({ error: `Invalid reason code. Must be one of: ${validReasons.join(', ')}` });
+    }
+
+    const unitsToDiscard = Number(units);
+    if (!unitsToDiscard || unitsToDiscard < 1) {
+      return res.status(400).json({ error: 'Units to discard must be at least 1' });
+    }
+
+    let targetHospitalId = reqHospitalId;
+    let targetBloodGroup = bloodGroup;
+    let targetComponent = componentType || 'PACKED_RED_CELLS';
+
+    if (inventoryId) {
+      const inv = await Inventory.findById(inventoryId);
+      if (inv) {
+        targetHospitalId = inv.hospitalId;
+        targetBloodGroup = inv.bloodGroup;
+        targetComponent = inv.componentType || targetComponent;
+      }
+    }
+
+    if (!targetHospitalId) targetHospitalId = req.user.hospitalId;
+    if (!canAccessHospital(req.user, targetHospitalId)) {
+      return res.status(403).json({ error: "You can only manage your own hospital's inventory" });
+    }
+
+    // Draw batches (FEFO - soonest expiry first) to discard
+    const batches = await BloodBatch.find({
+      hospitalId: targetHospitalId,
+      bloodGroup: targetBloodGroup,
+      componentType: targetComponent,
+      status: 'available',
+    }).sort({ expiryDate: 1 });
+
+    let remaining = unitsToDiscard;
+    for (const b of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(b.units, remaining);
+      b.units -= take;
+      remaining -= take;
+      if (b.units === 0) {
+        b.status = 'discarded';
+        b.discardReason = reason;
+        b.discardNotes = notes;
+        b.discardedAt = new Date();
+        b.discardedBy = req.user._id;
+      }
+      await b.save();
+    }
+
+    await refreshBloodInventory(targetHospitalId, targetBloodGroup, targetComponent);
+
+    logAudit(req.user, 'inventory.discard', {
+      entity: 'BloodBatch',
+      hospitalId: targetHospitalId,
+      summary: `Discarded ${unitsToDiscard} unit(s) of ${targetBloodGroup} (${targetComponent}) due to: ${reason}. Notes: ${notes || 'none'}`,
+    });
+
+    const updatedInv = await Inventory.findOne({
+      hospitalId: targetHospitalId,
+      resourceType: 'blood',
+      bloodGroup: targetBloodGroup,
+      componentType: targetComponent,
+    }).populate('hospitalId', 'name address contactPhone');
+
+    res.json({
+      message: `Successfully logged ${unitsToDiscard} unit(s) as discarded.`,
+      inventory: updatedInv,
+    });
+  } catch (err) {
+    console.error('Error discarding blood units:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE - Remove inventory (oxygen only; blood hard deletion is prohibited)
 router.delete('/:inventoryId', auth, isAdmin, async (req, res) => {
   try {
     const existing = await Inventory.findById(req.params.inventoryId);
     if (!existing) return res.status(404).json({ error: 'Inventory not found' });
     if (!canAccessHospital(req.user, existing.hospitalId)) {
       return res.status(403).json({ error: 'You can only manage your own hospital\'s inventory' });
+    }
+    if (existing.resourceType === 'blood') {
+      return res.status(400).json({
+        error: 'Direct deletion of blood inventory is prohibited to preserve medical audit trails and wastage metrics. Please record units as Discarded or Transfused with a clinical reason code.',
+      });
     }
     await existing.deleteOne();
     res.json({ message: 'Inventory deleted' });

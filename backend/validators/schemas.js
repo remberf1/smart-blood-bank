@@ -64,7 +64,8 @@ const donorRegisterSchema = z.object({
   phone: nigerianPhone,
   email: optionalEmail,
   password: z.string().min(6, 'Password must be at least 6 characters').optional(),
-  bloodGroup,
+  bloodGroup: bloodGroup.optional().or(z.literal('UNKNOWN')),
+  bloodGroupSelfReported: bloodGroup.optional().or(z.literal('UNKNOWN')),
   donationTypePreference: z.enum(['WHOLE_BLOOD', 'PLATELET_APHERESIS', 'PLASMA_APHERESIS']).optional().default('WHOLE_BLOOD'),
   nonRemunerationDeclared: z.boolean().optional().default(true),
   location: z.object({
@@ -79,6 +80,24 @@ const donorRegisterSchema = z.object({
   lastDonationDate: z.coerce.date().optional(),
 });
 
+const cancellationReasonEnum = z.enum([
+  'patient_deceased',
+  'patient_transferred',
+  'no_longer_needed',
+  'found_elsewhere',
+  'stock_unavailable',
+  'clinical_contraindication',
+  'donor_unavailable',
+  'timed_out',
+  'other',
+]);
+
+const cancellationSchema = z.object({
+  reason: cancellationReasonEnum,
+  notes: z.string().optional(),
+  phone: optionalNigerianPhone,
+});
+
 const patientRequestSchema = z
   .object({
     patientName: z.string().optional(),
@@ -86,6 +105,20 @@ const patientRequestSchema = z
     email: optionalEmail,
     doctorName: z.string().optional(),
     doctorPhone: optionalNigerianPhone,
+    doctorPin: z.string().optional(),
+    mdcnNumber: z.string().optional(),
+    hospitalAffiliation: z.string().optional(),
+    doctorRef: z
+      .object({
+        id: objectId.optional(),
+        name: z.string().optional(),
+        phone: optionalNigerianPhone,
+        mdcnNumber: z.string().optional(),
+        hospitalAffiliation: z.string().optional(),
+        verificationStatus: z.enum(['verified_id', 'phone_only', 'unverified']).optional(),
+      })
+      .optional(),
+    source: z.enum(['web_form', 'whatsapp_doctor', 'whatsapp_bridge', 'dashboard_requisition']).optional(),
     clinicalIndication: z.string().optional(),
     referenceId: z.string().optional(),
     resourceType: z.enum(['blood', 'oxygen']),
@@ -106,6 +139,8 @@ const patientRequestSchema = z
     path: ['bloodGroup'],
   });
 
+const clinicalRequisitionSchema = patientRequestSchema;
+
 const resourceRequestSchema = z.object({
   requestingHospitalId: objectId.optional(),
   supplyingHospitalId: objectId,
@@ -116,6 +151,34 @@ const resourceRequestSchema = z.object({
   notes: z.string().optional(),
 });
 
+const verificationMethodEnum = z.enum([
+  'tube_agglutination',
+  'gel_card',
+  'slide_test',
+  'prior_lab_record',
+  'automated_analyzer',
+]);
+
+const donorCorrectionRequestSchema = z.object({
+  requestedGroup: bloodGroup,
+  reason: z.string().min(3, 'Please provide a reason or medical context for the correction request'),
+});
+
+const verifyBloodGroupSchema = z.object({
+  verifiedGroup: bloodGroup.optional(),
+  verificationMethod: verificationMethodEnum.optional(),
+  notes: z.string().optional(),
+  action: z.enum(['approve', 'reject']).optional().default('approve'),
+}).refine((data) => {
+  if (data.action !== 'reject') {
+    return !!data.verifiedGroup && !!data.verificationMethod;
+  }
+  return true;
+}, {
+  message: 'verifiedGroup and verificationMethod are required when verifying a blood group',
+  path: ['verifiedGroup'],
+});
+
 module.exports = {
   loginSchema,
   forgotPasswordSchema,
@@ -124,6 +187,12 @@ module.exports = {
   updateUserSchema,
   donorRegisterSchema,
   patientRequestSchema,
+  clinicalRequisitionSchema,
+  cancellationReasonEnum,
+  cancellationSchema,
+  verificationMethodEnum,
+  donorCorrectionRequestSchema,
+  verifyBloodGroupSchema,
   resourceRequestSchema,
   nigerianPhone,
 };

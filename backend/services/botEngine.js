@@ -3,6 +3,7 @@ const Hospital = require('../models/Hospital');
 const Inventory = require('../models/Inventory');
 const Donor = require('../models/Donor');
 const PatientRequest = require('../models/PatientRequest');
+const SOSRequest = require('../models/SOSRequest');
 const DonationAppointment = require('../models/DonationAppointment');
 const { haversineDistance, getDistanceScore, getRecencyScore, getStockScore } = require('../controllers/wpsEngine');
 const { triggerSOS, processDonorResponse } = require('./sosService');
@@ -334,13 +335,21 @@ function formatRequestCard(r, viewerPhone = null) {
     ? `${quantity} unit(s) of ${r.bloodGroup || 'Blood'}`
     : `${quantity} cylinder(s) of Oxygen`;
 
-  let card = `📋 *REQUEST #${ref}*\n`;
+  let card = `📋 *CLINICAL REQUISITION #${ref}*\n`;
   card += `📌 Status: *${statusEmoji}*\n`;
   card += `🩺 Patient: ${displayName}\n`;
   card += `🩸 Resource: ${resourceDesc}\n`;
 
+  if (r.componentType && r.resourceType === 'blood') {
+    card += `🧪 Component: ${r.componentType.replace(/_/g, ' ')}\n`;
+  }
   if (r.doctorName) {
-    card += `👨‍⚕️ Prescribed By: ${r.doctorName}\n`;
+    const verifiedTag = r.doctorRef?.verificationStatus === 'verified_id' ? ' ✅ (Verified Doctor)' : '';
+    card += `👨‍⚕️ Prescribed By: ${r.doctorName}${verifiedTag}\n`;
+  }
+  if (r.deliveryStatus === 'cancelled') {
+    const reasonText = r.cancellation?.reason || r.cancellationReason || 'Cancelled';
+    card += `❌ Cancellation Reason: *${reasonText.replace(/_/g, ' ')}*\n`;
   }
   if (r.destinationFacility) {
     card += `🏥 Hospital: ${r.destinationFacility}`;
@@ -364,6 +373,28 @@ function formatRequestCard(r, viewerPhone = null) {
   return card;
 }
 
+function formatSosCard(sos) {
+  const respondedYes = (sos.donorsResponded || []).filter(r => r.response === 'yes').length;
+  const alertedCount = (sos.donorsAlerted || []).length;
+  const statusEmoji = sos.status === 'resolved' ? '🟢' : sos.status === 'expired' ? '⚪' : '🔴';
+  let card = `🚨 *EMERGENCY SOS BROADCAST — ${sos.bloodGroup}*\n\n`;
+  if (sos.referenceId) card += `Reference ID: *${sos.referenceId}*\n`;
+  card += `Status: ${statusEmoji} *${(sos.status || 'pending').toUpperCase()}*\n`;
+  if (sos.hospitalName) card += `Hospital: ${sos.hospitalName}\n`;
+  if (sos.doctorName) card += `Attending Doctor: ${sos.doctorName}\n`;
+  if (sos.componentNeeded) card += `Component: ${sos.componentNeeded.replace(/_/g, ' ')}\n`;
+  card += `Donors Alerted: ${alertedCount} within ${sos.radiusKm || 15}km\n`;
+  card += `Confirmed Available: *${respondedYes} donor(s)*\n`;
+  card += `Broadcast Time: ${new Date(sos.createdAt).toLocaleString()}\n`;
+
+  if (respondedYes > 0) {
+    card += `\n🎉 *Donor(s) confirmed availability!* Blood bank is coordinating transfusion.`;
+  } else if (sos.status === 'pending') {
+    card += `\n🟡 *Awaiting donor confirmations.* You will be notified immediately when a donor accepts.`;
+  }
+  return card;
+}
+
 async function handleTrackingLookup(query, userPhone, session) {
   const cleaned = (query || '').trim();
 
@@ -379,11 +410,25 @@ async function handleTrackingLookup(query, userPhone, session) {
           .limit(2)
           .populate('allocatedHospitalId preferredHospitalId');
 
-        if (recent.length > 0) {
+        const recentSos = await SOSRequest.find({
+          $or: [{ userPhone: phoneRegex }, { doctorPhone: phoneRegex }]
+        })
+          .sort({ createdAt: -1 })
+          .limit(2);
+
+        if (recent.length > 0 || recentSos.length > 0) {
           session.step = null;
-          let reply = `🔍 *TRACKING YOUR REQUESTS*\n\nFound ${recent.length} recent request(s) linked to your number:\n\n`;
-          reply += recent.map(r => formatRequestCard(r, userPhone)).join('\n---\n\n');
-          reply += `\n_To check a different request, reply with its 6-character Reference ID (e.g. SBB-4A7F2)._`;
+          let reply = `🔍 *TRACKING YOUR REQUESTS & BROADCASTS*\n\n`;
+          if (recent.length > 0) {
+            reply += `Found ${recent.length} recent requisition(s):\n\n`;
+            reply += recent.map(r => formatRequestCard(r, userPhone)).join('\n---\n\n');
+          }
+          if (recentSos.length > 0) {
+            if (recent.length > 0) reply += '\n\n═══════════════════\n\n';
+            reply += `Found ${recentSos.length} recent emergency broadcast(s):\n\n`;
+            reply += recentSos.map(s => formatSosCard(s)).join('\n---\n\n');
+          }
+          reply += `\n\n_To check a specific request, reply with its Reference ID (e.g. SBB-4A7F2 or SOS-3F8A1)._`;
           return reply;
         }
       } catch (err) {
@@ -392,14 +437,29 @@ async function handleTrackingLookup(query, userPhone, session) {
     }
 
     session.step = 'awaiting_tracking_query';
-    return `📋 *TRACK REQUEST*\n\nEnter your 6-character reference ID\n(e.g., SBB-4A7F2 or 3F8A1B):`;
+    return `📋 *TRACK REQUEST*\n\nEnter your Reference ID\n(e.g., SBB-4A7F2 or SOS-3F8A1):`;
   }
 
   try {
+    const cleanRef = cleaned.toUpperCase().replace(/\s+/g, '');
+
+    // Check if query is for an SOS broadcast (starts with SOS or matches SOSRequest)
+    if (cleanRef.startsWith('SOS')) {
+      const sosMatch = await SOSRequest.findOne({
+        $or: [
+          { referenceId: new RegExp('^' + cleanRef + '$', 'i') },
+          { referenceId: new RegExp('^SOS-' + cleanRef.replace(/^SOS-?/, '') + '$', 'i') },
+        ]
+      });
+      if (sosMatch) {
+        session.step = null;
+        return `${formatSosCard(sosMatch)}\n\n_Type MENU to return to main menu._`;
+      }
+    }
+
     let requests = [];
 
     // Match referenceId e.g. SBB-4A7F2
-    const cleanRef = cleaned.toUpperCase().replace(/\s+/g, '');
     const byRef = await PatientRequest.find({
       $or: [
         { referenceId: new RegExp('^' + cleanRef + '$', 'i') },
@@ -412,6 +472,13 @@ async function handleTrackingLookup(query, userPhone, session) {
     if (requests.length === 0 && mongoose.Types.ObjectId.isValid(cleaned) && cleaned.length === 24) {
       const match = await PatientRequest.findById(cleaned).populate('allocatedHospitalId preferredHospitalId');
       if (match) requests.push(match);
+      if (!match) {
+        const sosMatch = await SOSRequest.findById(cleaned);
+        if (sosMatch) {
+          session.step = null;
+          return `${formatSosCard(sosMatch)}\n\n_Type MENU to return to main menu._`;
+        }
+      }
     }
 
     if (requests.length === 0 && /^[a-fA-F0-9]{4,24}$/.test(cleaned)) {
@@ -435,8 +502,23 @@ async function handleTrackingLookup(query, userPhone, session) {
       }
     }
 
+    // If still no PatientRequest found, check SOSRequest by reference or phone
     if (requests.length === 0) {
-      return `⚠️ *REQUISITION NOT FOUND*\n\nWe couldn't find any requisition matching "${cleaned}".\n\nPlease verify your 6-character reference ID (e.g. SBB-4A7F2) and try again, or type *MENU*.`;
+      const sosFallback = await SOSRequest.findOne({
+        $or: [
+          { referenceId: new RegExp('^' + cleanRef + '$', 'i') },
+          { userPhone: new RegExp((cleaned.replace(/\D/g, '').slice(-10)) + '$') },
+        ]
+      }).sort({ createdAt: -1 });
+
+      if (sosFallback) {
+        session.step = null;
+        return `${formatSosCard(sosFallback)}\n\n_Type MENU to return to main menu._`;
+      }
+    }
+
+    if (requests.length === 0) {
+      return `⚠️ *RECORD NOT FOUND*\n\nWe couldn't find any clinical requisition or emergency SOS matching "${cleaned}".\n\nPlease verify your reference ID (e.g. SBB-4A7F2 or SOS-3F8A1) and try again, or type *MENU*.`;
     }
 
     session.step = null;
@@ -731,11 +813,20 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
         contactPhone: userPhone,
         resourceType: 'blood',
         bloodGroup,
+        componentType: session.doctorComponent || 'PACKED_RED_CELLS',
         units,
         urgency: 'emergency',
         destinationFacility: hospitalName,
         ward,
         doctorName: docName,
+        doctorPhone: userPhone,
+        doctorRef: {
+          name: docName,
+          phone: userPhone,
+          hospitalAffiliation: hospitalName,
+          verificationStatus: 'verified_id',
+        },
+        source: 'whatsapp_doctor',
         clinicalIndication: indication,
         referenceId: ref,
         deliveryStatus: 'pending',
@@ -753,8 +844,14 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
     const bloodMatch = incomingMsg.toUpperCase().replace(/\s+/g, '').match(/(AB|A|B|O)[+-]/);
     if (bloodMatch) {
       const bloodGroup = bloodMatch[0];
-      const ref = `SOS-${Math.random().toString(16).substring(2, 7).toUpperCase()}`;
-      await triggerSOS(bloodGroup, session.lat || 6.5244, session.lon || 3.3792, userPhone, 15);
+      const ref = `SOS-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      await triggerSOS(bloodGroup, session.lat || 6.5244, session.lon || 3.3792, userPhone, 15, {
+        referenceId: ref,
+        doctorName: session.doctorName || 'Dr. A. Adeleke',
+        doctorPhone: userPhone,
+        hospitalName: session.doctorHospital || 'LUTH',
+        componentNeeded: session.doctorComponent || 'WHOLE_BLOOD',
+      });
       session.step = 'in_doctor_menu';
       return `🚨 *EMERGENCY SOS BROADCAST INITIATED*\n\nReference: *${ref}*\n\nWe have sent emergency alerts to:\n  • Registered ${bloodGroup} donors within 15km\n  • Neighboring hospital blood banks\n\nStatus: 🟡 *Awaiting Donor Response*\n\nYou will be notified as soon as a donor confirms availability. Track status: *TRACK ${ref}*\n\n📞 For immediate coordination, contact:\n   LUTH Blood Bank: 08012345000\n   OSUTH Blood Bank: 08012345678`;
     }
@@ -847,6 +944,13 @@ async function handleIncomingMessage({ fromPhone, text = '', latitude = null, lo
         destinationFacility: hospitalName,
         doctorName: docName,
         doctorPhone: docPhone,
+        doctorRef: {
+          name: docName,
+          phone: docPhone,
+          hospitalAffiliation: hospitalName,
+          verificationStatus: 'phone_only',
+        },
+        source: 'whatsapp_bridge',
         referenceId: ref,
         deliveryStatus: 'pending',
       }).save();
@@ -1037,6 +1141,7 @@ module.exports = {
   formatDoctorOxygen,
   formatDoctorBloodQuery,
   formatRequestCard,
+  formatSosCard,
   handleTrackingLookup,
   findRankedHospitals,
 };

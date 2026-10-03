@@ -22,6 +22,7 @@ export default function PublicRequestPage() {
     email: '',
     doctorName: '',
     doctorPhone: '',
+    doctorPin: '',
     clinicalAcknowledged: false,
     resourceType: 'blood' as 'blood' | 'oxygen',
     bloodGroup: '',
@@ -84,7 +85,9 @@ export default function PublicRequestPage() {
         units: form.units,
         urgency: form.urgency,
         doctorName: form.doctorName.trim(),
+        source: 'web_form',
       };
+      if (form.doctorPin?.trim()) payload.doctorPin = form.doctorPin.trim().toUpperCase();
       if (form.patientName) payload.patientName = form.patientName.trim();
       if (form.doctorPhone.trim()) payload.doctorPhone = form.doctorPhone.trim();
       if (form.email) payload.email = form.email.trim();
@@ -128,7 +131,7 @@ export default function PublicRequestPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-800">Smart Blood Bank</h1>
-            <p className="text-xs text-gray-400">Request blood or oxygen</p>
+            <p className="text-xs text-gray-400">Clinical Blood &amp; Oxygen Requisition</p>
           </div>
         </div>
 
@@ -198,7 +201,7 @@ export default function PublicRequestPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <HeartPulse className="h-5 w-5 text-red-500" /> New clinical requisition
+                <HeartPulse className="h-5 w-5 text-red-500" /> Clinical Requisition Order
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -207,7 +210,7 @@ export default function PublicRequestPage() {
                 {/* Attending Physician & Clinical Order Safeguard */}
                 <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3.5 space-y-3">
                   <p className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
-                    <span>🩺</span> Attending Physician &amp; Clinical Order
+                    <span>🩺</span> Attending Physician &amp; Clinical Governance
                   </p>
                   <div>
                     <Label className="text-xs font-medium">Attending Doctor&apos;s Name *</Label>
@@ -219,17 +222,32 @@ export default function PublicRequestPage() {
                       required
                     />
                   </div>
-                  <div>
-                    <Label className="text-xs font-medium">Doctor&apos;s Phone / Folio (Optional)</Label>
-                    <Input
-                      type="tel"
-                      inputMode="tel"
-                      value={form.doctorPhone}
-                      onChange={(e) => set({ doctorPhone: e.target.value.replace(/[^\d+]/g, '') })}
-                      placeholder="e.g. 08012345678"
-                      maxLength={14}
-                      className="mt-1 bg-white"
-                    />
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs font-medium">Doctor&apos;s Phone (Optional)</Label>
+                      <Input
+                        type="tel"
+                        inputMode="tel"
+                        value={form.doctorPhone}
+                        onChange={(e) => set({ doctorPhone: e.target.value.replace(/[^\d+]/g, '') })}
+                        placeholder="e.g. 08012345678"
+                        maxLength={14}
+                        className="mt-1 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs font-medium flex items-center justify-between">
+                        <span>Doctor PIN (Optional)</span>
+                        <span className="text-[10px] text-emerald-700 font-semibold">Instant Verify</span>
+                      </Label>
+                      <Input
+                        value={form.doctorPin}
+                        onChange={(e) => set({ doctorPin: e.target.value.toUpperCase() })}
+                        placeholder="e.g. DOC-2026 or HOSP-..."
+                        maxLength={16}
+                        className="mt-1 bg-white font-mono uppercase text-xs"
+                      />
+                    </div>
                   </div>
                   <div className="flex items-start gap-2 pt-1">
                     <input

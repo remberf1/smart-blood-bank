@@ -31,6 +31,7 @@ interface Appt {
   timeSlot?: string;
   preferredDay?: string;
   preferredWindow?: string;
+  donationType?: 'WHOLE_BLOOD' | 'PLATELET_APHERESIS' | 'PLASMA_APHERESIS';
   donorNinMasked?: string;
   status: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'missed';
   notes?: string;
@@ -349,7 +350,14 @@ export default function AppointmentsPage() {
               ) : appts.length === 0 ? (
                 <TableRow><TableCell colSpan={7}><EmptyState icon={CalendarCheck} title={`No appointments${status ? ` (${LABEL[status] || status})` : ''}`} hint="Donor appointment requests will appear here to accept and assign times." /></TableCell></TableRow>
               ) : (
-                appts.map((a) => (
+                appts.map((a) => {
+                  const apptDateRaw = a.assignedDate || a.appointmentDate;
+                  const isFuture = Boolean(
+                    apptDateRaw &&
+                    !isNaN(new Date(apptDateRaw).getTime()) &&
+                    new Date(apptDateRaw).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)
+                  );
+                  return (
                   <TableRow key={a._id}>
                     <TableCell>
                       <div className="font-medium text-gray-900">{a.donorId?.name || '—'}</div>
@@ -362,6 +370,15 @@ export default function AppointmentsPage() {
                       <span className="flex items-center gap-1 font-bold text-red-600">
                         <Droplet className="h-4 w-4 fill-red-600" /> {a.donorId?.bloodGroup}
                       </span>
+                      <div className="text-[10px] mt-1 font-medium">
+                        {a.donationType === 'PLATELET_APHERESIS' ? (
+                          <span className="text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">🟡 Platelets</span>
+                        ) : a.donationType === 'PLASMA_APHERESIS' ? (
+                          <span className="text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">💧 Plasma</span>
+                        ) : (
+                          <span className="text-red-800 bg-red-50 px-1.5 py-0.5 rounded border border-red-200">🩸 Whole Blood</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm">{a.hospitalId?.name || '—'}</TableCell>
                     <TableCell className="text-sm">
@@ -380,9 +397,11 @@ export default function AppointmentsPage() {
                       ) : (
                         <div className="space-y-0.5">
                           <div className="font-medium text-gray-800">
-                            {a.preferredDay
-                              ? new Date(a.preferredDay + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-                              : a.appointmentDate ? new Date(a.appointmentDate).toLocaleDateString() : 'Earliest open day'}
+                            {a.assignedDate
+                              ? new Date(a.assignedDate).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                              : a.appointmentDate && !isNaN(new Date(a.appointmentDate).getTime())
+                              ? new Date(a.appointmentDate).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                              : a.preferredDay || 'Earliest open day'}
                           </div>
                           <div className="text-xs capitalize text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded inline-block font-medium">
                             {a.preferredWindow ? `${a.preferredWindow} window` : 'Awaiting time assignment'}
@@ -422,8 +441,9 @@ export default function AppointmentsPage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => recordDonation(a)}
-                                disabled={recordingId === a._id}
-                                className="text-emerald-700 border-emerald-200 hover:bg-emerald-50 font-medium"
+                                disabled={recordingId === a._id || isFuture}
+                                title={isFuture ? "Cannot record donation before the scheduled appointment date" : "Record donation"}
+                                className="text-emerald-700 border-emerald-200 hover:bg-emerald-50 font-medium disabled:opacity-50"
                               >
                                 <HeartHandshake className="h-4 w-4 mr-1" />
                                 {recordingId === a._id ? 'Recording…' : 'Record donation'}
@@ -433,6 +453,9 @@ export default function AppointmentsPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => setStatusFor(a._id, 'completed')}
+                              disabled={isFuture}
+                              title={isFuture ? "Cannot complete an appointment before its scheduled date" : "Mark completed"}
+                              className={isFuture ? "opacity-50 cursor-not-allowed text-muted-foreground" : ""}
                             >
                               Completed
                             </Button>
@@ -449,7 +472,8 @@ export default function AppointmentsPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))
+                );
+              })
               )}
             </TableBody>
           </Table>

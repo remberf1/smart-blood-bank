@@ -27,8 +27,9 @@ router.get('/', auth, async (req, res) => {
         rrFilter.supplyingHospitalId = hid; // requests awaiting THIS hospital's response
         invFilter.hospitalId = hid;
       } else {
-        // A hospital user with no hospital sees nothing to act on.
-        return res.json({ sos: 0, patientRequests: 0, resourceRequests: 0, appointments: 0, lowStock: 0 });
+        // A hospital user with no hospital sees nothing to act on locally, but emergency SOS is network-wide.
+        const sos = await SOSRequest.countDocuments({ status: 'pending' });
+        return res.json({ sos, patientRequests: 0, resourceRequests: 0, appointments: 0, lowStock: 0 });
       }
     }
 

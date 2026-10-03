@@ -46,6 +46,9 @@ import {
   Printer,
   UserCheck,
   Stethoscope,
+  ShieldCheck,
+  FlaskConical,
+  AlertTriangle,
 } from 'lucide-react';
 
 function SortHead({ label, col, sort, onSort }: { label: string; col: string; sort: string; onSort: (c: any) => void }) {
@@ -70,6 +73,15 @@ interface Donor {
   phone: string;
   email: string;
   bloodGroup: string;
+  bloodGroupSelfReported?: string;
+  bloodGroupVerified?: string | null;
+  bloodGroupVerificationStatus?: 'unverified' | 'pending_verification' | 'verified' | 'rejected';
+  correctionRequest?: {
+    requestedGroup: string;
+    reason: string;
+    status?: string;
+    requestedAt?: string;
+  };
   eligibilityStatus: string;
   deferralReason?: string;
   lastDonationDate: string;
@@ -84,6 +96,13 @@ interface Donor {
 
 const PAGE_SIZE = 20;
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+const VERIFICATION_METHODS = [
+  { value: 'tube_agglutination', label: 'Tube Agglutination (Gold Standard: Forward & Reverse)' },
+  { value: 'gel_card', label: 'Gel Card / Column Agglutination Technology' },
+  { value: 'automated_analyzer', label: 'Automated Immunohematology Analyzer' },
+  { value: 'slide_test', label: 'Slide Test (Rapid Field Screening)' },
+  { value: 'prior_lab_record', label: 'Official Prior Hospital Transfusion Record' },
+];
 // Clickable column → backend sort key.
 const SORT_KEYS: Record<string, string> = {
   bloodGroup: 'bloodGroup',
@@ -102,6 +121,7 @@ export default function DonorsPage() {
   const [stats, setStats] = useState({ total: 0, eligible: 0, deferred: 0, bloodGroups: 0 });
   const [nowMs, setNowMs] = useState(0);
   const [bloodFilter, setBloodFilter] = useState('');
+  const [verificationFilter, setVerificationFilter] = useState('');
   const [eligFilter, setEligFilter] = useState('');
   const [homeFilter, setHomeFilter] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -110,6 +130,17 @@ export default function DonorsPage() {
   const [selectedDonor, setSelectedDonor] = useState<Donor | null>(null);
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
+
+  // Blood Group Verification Dialog state
+  const [verifyDonor, setVerifyDonor] = useState<Donor | null>(null);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  const [verifyingBlood, setVerifyingBlood] = useState(false);
+  const [verifyForm, setVerifyForm] = useState({
+    verifiedGroup: 'O+',
+    verificationMethod: 'tube_agglutination',
+    notes: '',
+    action: 'approve' as 'approve' | 'reject',
+  });
 
   const { user } = useAuth();
   const isSuperadmin = user?.role === 'superadmin';
@@ -122,6 +153,8 @@ export default function DonorsPage() {
     hemoglobin: '13.5',
     bloodPressure: '120/80',
     ttiPassed: true,
+    verifiedGroup: '',
+    verificationMethod: 'tube_agglutination',
   });
 
   // QR Scanner / Verifier state
@@ -130,12 +163,17 @@ export default function DonorsPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifiedDonor, setVerifiedDonor] = useState<{
     id?: string;
+    _id?: string;
     name: string;
     bloodGroup: string;
+    bloodGroupSelfReported?: string;
+    bloodGroupVerified?: string | null;
+    bloodGroupVerificationStatus?: 'unverified' | 'pending_verification' | 'verified' | 'rejected';
     phone: string;
     eligibilityStatus: string;
     lastDonationDate?: string | null;
     deferralReason?: string | null;
+    ninMasked?: string;
   } | null>(null);
   const [recordingQrDonation, setRecordingQrDonation] = useState(false);
 
@@ -167,6 +205,7 @@ export default function DonorsPage() {
           limit: PAGE_SIZE,
           search: search || undefined,
           bloodGroup: bloodFilter || undefined,
+          verificationStatus: verificationFilter || undefined,
           eligibility: eligFilter || undefined,
           homeHospital: homeFilter || undefined,
           from: fromDate || undefined,
@@ -184,7 +223,7 @@ export default function DonorsPage() {
     } finally {
       setLoading(false);
     }
-  }, [bloodFilter, eligFilter, homeFilter, fromDate, toDate, sort]);
+  }, [bloodFilter, verificationFilter, eligFilter, homeFilter, fromDate, toDate, sort]);
 
   // Debounce the search box and reset to the first page on a new term.
   useEffect(() => {
@@ -198,12 +237,44 @@ export default function DonorsPage() {
   // Changing a filter or the sort resets to the first page.
   useEffect(() => {
     setPage(1);
-  }, [bloodFilter, eligFilter, homeFilter, fromDate, toDate, sort]);
+  }, [bloodFilter, verificationFilter, eligFilter, homeFilter, fromDate, toDate, sort]);
 
   // Fetch whenever the page, search, filters, or sort change.
   useEffect(() => {
     fetchDonors(page, debouncedSearch);
   }, [page, debouncedSearch, fetchDonors]);
+
+  const openVerifyModal = (d: Donor) => {
+    setVerifyDonor(d);
+    setVerifyForm({
+      verifiedGroup: d.correctionRequest?.requestedGroup || d.bloodGroupVerified || d.bloodGroup || 'O+',
+      verificationMethod: 'tube_agglutination',
+      notes: d.correctionRequest?.reason ? `Reviewed request: ${d.correctionRequest.reason}` : '',
+      action: 'approve',
+    });
+    setVerifyModalOpen(true);
+  };
+
+  const handleVerifySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!verifyDonor) return;
+    setVerifyingBlood(true);
+    try {
+      const res = await apiClient.post(`/donors/${verifyDonor._id}/verify-blood-group`, {
+        verifiedGroup: verifyForm.action === 'reject' ? undefined : verifyForm.verifiedGroup,
+        verificationMethod: verifyForm.action === 'reject' ? undefined : verifyForm.verificationMethod,
+        notes: verifyForm.notes,
+        action: verifyForm.action,
+      });
+      toast.success(res.data.message || (verifyForm.action === 'reject' ? 'Correction request rejected' : `Blood group ${verifyForm.verifiedGroup} verified!`));
+      setVerifyModalOpen(false);
+      fetchDonors(page, debouncedSearch);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to submit verification');
+    } finally {
+      setVerifyingBlood(false);
+    }
+  };
 
   // Load hospitals once for the home-hospital filter (superadmin) + record dialog.
   useEffect(() => {
@@ -238,6 +309,8 @@ export default function DonorsPage() {
       hemoglobin: '13.5',
       bloodPressure: '120/80',
       ttiPassed: true,
+      verifiedGroup: donor.bloodGroupVerified || donor.bloodGroup || 'O+',
+      verificationMethod: 'tube_agglutination',
     });
     let list = hospitals;
     if (isSuperadmin && list.length === 0) {
@@ -329,14 +402,21 @@ export default function DonorsPage() {
       toast.error('Donation cannot proceed: Rapid TTI screening must be non-reactive.');
       return;
     }
+
+    const payloadTriage: any = { ...triage };
+    if (recordDonor.bloodGroupVerificationStatus !== 'verified') {
+      payloadTriage.verifiedGroup = triage.verifiedGroup || recordDonor.bloodGroupVerified || recordDonor.bloodGroup || 'O+';
+      payloadTriage.verificationMethod = triage.verificationMethod || 'tube_agglutination';
+    }
+
     setRecording(true);
     try {
       const res = await apiClient.post(`/donors/${recordDonor._id}/record-donation`, {
         hospitalId: isSuperadmin ? recordHospitalId : undefined,
-        triage,
+        triage: payloadTriage,
       });
       const { bloodGroup, units } = res.data.inventory;
-      toast.success(`Donation recorded — ${bloodGroup} stock is now ${units} unit${units === 1 ? '' : 's'}. Donor deferred 90 days.`);
+      toast.success(`Donation recorded & verified — ${bloodGroup} stock is now ${units} unit${units === 1 ? '' : 's'}. Donor deferred 90 days.`);
       setRecordDonor(null);
       fetchDonors(page, debouncedSearch); // refresh eligibility badges
     } catch (err: any) {
@@ -518,6 +598,16 @@ export default function DonorsPage() {
           <option value="pending">Pending</option>
           <option value="ineligible">Ineligible</option>
         </select>
+        <select
+          value={verificationFilter}
+          onChange={(e) => setVerificationFilter(e.target.value)}
+          className="h-9 border border-input rounded-lg px-3 text-sm bg-card"
+        >
+          <option value="">All verifications</option>
+          <option value="verified">Lab-Verified</option>
+          <option value="pending_verification">Pending Review</option>
+          <option value="unverified">Self-Reported</option>
+        </select>
         {isSuperadmin && (
           <select
             value={homeFilter}
@@ -552,11 +642,11 @@ export default function DonorsPage() {
             />
           </div>
         </div>
-        {(bloodFilter || eligFilter || homeFilter || fromDate || toDate || searchTerm) && (
+        {(bloodFilter || verificationFilter || eligFilter || homeFilter || fromDate || toDate || searchTerm) && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setBloodFilter(''); setEligFilter(''); setHomeFilter(''); setFromDate(''); setToDate(''); setSearchTerm(''); }}
+            onClick={() => { setBloodFilter(''); setVerificationFilter(''); setEligFilter(''); setHomeFilter(''); setFromDate(''); setToDate(''); setSearchTerm(''); }}
             className="text-muted-foreground"
           >
             Clear
@@ -626,10 +716,37 @@ export default function DonorsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-                            <Droplet className="h-3 w-3 mr-1" />
-                            {donor.bloodGroup}
-                          </Badge>
+                          <div className="space-y-1">
+                            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 font-bold">
+                              <Droplet className="h-3 w-3 mr-1 text-red-600" />
+                              {donor.bloodGroupVerified || donor.bloodGroup}
+                            </Badge>
+                            <div>
+                              {donor.bloodGroupVerificationStatus === 'verified' ? (
+                                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-medium py-0 px-1.5 flex items-center gap-1 w-fit">
+                                  <ShieldCheck className="h-2.5 w-2.5 text-emerald-600" /> Lab-Verified
+                                </Badge>
+                              ) : donor.bloodGroupVerificationStatus === 'pending_verification' ? (
+                                <Badge
+                                  variant="outline"
+                                  className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-semibold py-0.5 px-2 flex items-center gap-1 w-fit cursor-help shadow-2xs"
+                                  title={`Discrepancy: Profile lists ${donor.bloodGroup}, but donor claims ${donor.correctionRequest?.requestedGroup}. Confirmatory ABO/Rh laboratory test required.`}
+                                >
+                                  <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />
+                                  Discrepancy: Claims {donor.correctionRequest?.requestedGroup || '?'}
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="bg-slate-100 text-slate-700 border-slate-300 text-[10px] font-medium py-0.5 px-1.5 flex items-center gap-1 w-fit cursor-help"
+                                  title="Self-reported blood type. Confirmatory ABO/Rh test required before units can be logged into blood inventory."
+                                >
+                                  <FlaskConical className="h-3 w-3 text-slate-500 shrink-0" />
+                                  Self-Reported (Confirmatory Test Req.)
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
                         </TableCell>
                         <TableCell>
                           {getEligibilityBadge(donor.eligibilityStatus)}
@@ -658,41 +775,54 @@ export default function DonorsPage() {
                           {donor.homeHospitalId?.name || <span className="text-muted-foreground/60">—</span>}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {donor.eligibilityStatus === 'eligible' && (
+                              <Button
+                                size="sm"
+                                onClick={() => openRecord(donor)}
+                                className="h-8 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium flex items-center gap-1 shadow-2xs"
+                                title="Log phlebotomy donation and update inventory"
+                              >
+                                <HeartHandshake className="h-3.5 w-3.5" /> Log Donation
+                              </Button>
+                            )}
                             <Button
-                              variant="ghost"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openVerifyModal(donor)}
+                              title="Laboratory blood group verification / correction review"
+                              className={`h-8 px-2 text-xs flex items-center gap-1 ${
+                                donor.bloodGroupVerificationStatus === 'pending_verification'
+                                  ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 font-semibold border-amber-300'
+                                  : donor.bloodGroupVerificationStatus === 'verified'
+                                  ? 'text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 border-emerald-200'
+                                  : 'text-blue-700 hover:text-blue-800 hover:bg-blue-50 border-blue-200'
+                              }`}
+                            >
+                              <FlaskConical className="h-3.5 w-3.5" />
+                              {donor.bloodGroupVerificationStatus === 'pending_verification'
+                                ? 'Resolve Review'
+                                : donor.bloodGroupVerificationStatus === 'verified'
+                                ? 'Re-verify'
+                                : 'Verify ABO/Rh'}
+                            </Button>
+                            <Button
+                              variant="outline"
                               size="sm"
                               onClick={() => openManageModal(donor)}
                               title="Clinical exam & donor management"
-                              className="h-8 px-2 text-blue-700 hover:text-blue-800 hover:bg-blue-50 text-xs"
+                              className="h-8 px-2 text-gray-700 hover:text-gray-900 border-gray-200 hover:bg-gray-50 text-xs flex items-center gap-1"
                             >
-                              <UserCheck className="h-3.5 w-3.5 mr-1" />
-                              Manage
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openRecord(donor)}
-                              disabled={donor.eligibilityStatus !== 'eligible'}
-                              title={
-                                donor.eligibilityStatus !== 'eligible'
-                                  ? `Not eligible (${donor.eligibilityStatus})`
-                                  : 'Record a donation'
-                              }
-                              className="h-8 px-2.5 text-emerald-700 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 text-xs"
-                            >
-                              <HeartHandshake className="h-3.5 w-3.5 mr-1" />
-                              Record
+                              <UserCheck className="h-3.5 w-3.5" /> Edit Profile
                             </Button>
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleViewQr(donor)}
                               title="Print official donor ID card / pass"
-                              className="h-8 px-2 text-muted-foreground hover:text-foreground hover:bg-muted text-xs"
+                              className="h-8 px-2 text-muted-foreground hover:text-foreground hover:bg-muted text-xs flex items-center gap-1"
                             >
-                              <Printer className="h-3.5 w-3.5 mr-1" />
-                              Pass
+                              <Printer className="h-3.5 w-3.5" /> Pass
                             </Button>
                           </div>
                         </TableCell>
@@ -920,6 +1050,50 @@ export default function DonorsPage() {
                 <p><strong>Phone:</strong> {recordDonor.phone}</p>
               </div>
 
+              {/* Mandatory Confirmatory ABO/Rh Testing for Unverified / Discrepancy Donors */}
+              {recordDonor.bloodGroupVerificationStatus !== 'verified' && (
+                <div className="rounded-lg border-2 border-amber-300 bg-amber-50/80 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                      <FlaskConical className="h-4 w-4 text-amber-700" /> Mandatory Confirmatory ABO/Rh Test
+                    </h4>
+                    <span className="text-[10px] font-semibold text-amber-900 bg-amber-200 px-2 py-0.5 rounded border border-amber-300">
+                      Intake Safety Protocol
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-snug">
+                    This donor&apos;s blood group is <strong>{recordDonor.bloodGroupVerificationStatus === 'pending_verification' ? 'Pending Review (Discrepancy)' : 'Self-Reported'}</strong>.
+                    Per National Blood Safety protocols, perform a confirmatory laboratory test before phlebotomy.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="text-xs font-semibold text-amber-950 block mb-1">Confirmed ABO/Rh *</label>
+                      <select
+                        value={triage.verifiedGroup || recordDonor.bloodGroup}
+                        onChange={(e) => setTriage({ ...triage, verifiedGroup: e.target.value })}
+                        className="w-full h-8 border border-amber-300 rounded px-2 text-xs bg-white font-bold text-red-700"
+                      >
+                        {BLOOD_GROUPS.map((bg) => (
+                          <option key={bg} value={bg}>{bg}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-amber-950 block mb-1">Test Method *</label>
+                      <select
+                        value={triage.verificationMethod}
+                        onChange={(e) => setTriage({ ...triage, verificationMethod: e.target.value })}
+                        className="w-full h-8 border border-amber-300 rounded px-2 text-xs bg-white"
+                      >
+                        {VERIFICATION_METHODS.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Pre-Donation Clinical Triage Checklist (WHO / NBTS Protocol) */}
               <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3.5 space-y-3">
                 <div className="flex items-center justify-between">
@@ -1038,9 +1212,14 @@ export default function DonorsPage() {
                       <p className="text-[10px] text-muted-foreground">{selectedDonor.homeHospitalId?.name || 'Verified Donor Network'}</p>
                     </div>
                   </div>
-                  <Badge className="bg-red-600 text-white font-bold text-sm px-2.5 py-0.5">
-                    {selectedDonor.bloodGroup}
-                  </Badge>
+                  <div className="text-right">
+                    <Badge className="bg-red-600 text-white font-bold text-sm px-2.5 py-0.5">
+                      {selectedDonor.bloodGroupVerified || selectedDonor.bloodGroup}
+                    </Badge>
+                    <div className="text-[9px] font-medium text-muted-foreground mt-0.5">
+                      {selectedDonor.bloodGroupVerificationStatus === 'verified' ? '✓ Lab-Verified' : 'Self-Reported'}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -1087,6 +1266,165 @@ export default function DonorsPage() {
               Close
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Laboratory Blood Group Verification Dialog */}
+      <Dialog open={verifyModalOpen} onOpenChange={setVerifyModalOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5 text-indigo-600" /> Laboratory Blood Group Verification
+            </DialogTitle>
+            <DialogDescription>
+              Record confirmatory laboratory ABO/Rh grouping or review a donor&apos;s blood type correction request.
+            </DialogDescription>
+          </DialogHeader>
+
+          {verifyDonor && (
+            <form onSubmit={handleVerifySubmit} className="space-y-4 py-2">
+              {/* Donor Summary Header */}
+              <div className="rounded-lg border bg-muted/40 p-3 flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-sm text-foreground">{verifyDonor.name}</h4>
+                  <p className="text-xs text-muted-foreground">Tel: {verifyDonor.phone}</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-muted-foreground">Current Status</div>
+                  <Badge variant="outline" className="font-semibold text-xs mt-0.5">
+                    {verifyDonor.bloodGroup} &bull; {verifyDonor.bloodGroupVerificationStatus || 'unverified'}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Pending Correction Alert */}
+              {verifyDonor.correctionRequest && verifyDonor.bloodGroupVerificationStatus === 'pending_verification' && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-amber-900 font-semibold">
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-amber-600" /> Pending Correction Request
+                    </span>
+                    <span className="text-[11px] font-mono">
+                      Requested: <strong className="text-amber-950 font-bold">{verifyDonor.correctionRequest.requestedGroup}</strong>
+                    </span>
+                  </div>
+                  <p className="text-amber-800 text-[11px] bg-white/70 p-2 rounded border border-amber-200">
+                    &ldquo;{verifyDonor.correctionRequest.reason}&rdquo;
+                  </p>
+                  <div className="flex items-center gap-4 pt-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer font-medium text-amber-900">
+                      <input
+                        type="radio"
+                        name="verifyAction"
+                        checked={verifyForm.action === 'approve'}
+                        onChange={() => setVerifyForm({ ...verifyForm, action: 'approve' })}
+                        className="accent-emerald-600"
+                      />
+                      Approve &amp; Certify Lab Result
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer font-medium text-amber-900">
+                      <input
+                        type="radio"
+                        name="verifyAction"
+                        checked={verifyForm.action === 'reject'}
+                        onChange={() => setVerifyForm({ ...verifyForm, action: 'reject' })}
+                        className="accent-red-600"
+                      />
+                      Reject Request
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {verifyForm.action === 'approve' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-foreground">Verified Blood Group *</label>
+                      <select
+                        value={verifyForm.verifiedGroup}
+                        onChange={(e) => setVerifyForm({ ...verifyForm, verifiedGroup: e.target.value })}
+                        className="w-full mt-1 border border-input rounded-md p-2 bg-background text-sm font-bold focus:ring-2 focus:ring-indigo-500"
+                        required
+                      >
+                        {BLOOD_GROUPS.map((bg) => (
+                          <option key={bg} value={bg}>{bg}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold text-foreground">Verification Method *</label>
+                      <select
+                        value={verifyForm.verificationMethod}
+                        onChange={(e) => setVerifyForm({ ...verifyForm, verificationMethod: e.target.value })}
+                        className="w-full mt-1 border border-input rounded-md p-2 bg-background text-xs focus:ring-2 focus:ring-indigo-500"
+                        required
+                      >
+                        {VERIFICATION_METHODS.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-foreground">Laboratory Notes / Findings</label>
+                    <textarea
+                      value={verifyForm.notes}
+                      onChange={(e) => setVerifyForm({ ...verifyForm, notes: e.target.value })}
+                      rows={2}
+                      placeholder="e.g. Forward and reverse typing concordant. Anti-D (4+) confirmed."
+                      className="w-full mt-1 border border-input rounded-md p-2 bg-background text-xs focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="text-xs font-semibold text-foreground">Rejection Reason / Findings *</label>
+                  <textarea
+                    value={verifyForm.notes}
+                    onChange={(e) => setVerifyForm({ ...verifyForm, notes: e.target.value })}
+                    rows={3}
+                    placeholder="e.g. Laboratory re-test confirmed original blood group A+. Correction request rejected."
+                    className="w-full mt-1 border border-input rounded-md p-2 bg-background text-xs focus:ring-2 focus:ring-red-500"
+                    required
+                  />
+                </div>
+              )}
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-[11px] text-blue-900 space-y-1">
+                <p className="font-semibold flex items-center gap-1">
+                  <ShieldCheck className="h-3.5 w-3.5 text-blue-600" /> Clinical Quality &amp; Transfusion Safety
+                </p>
+                <p className="text-blue-800">
+                  Only lab-verified donors are matched for emergency SOS notifications and direct clinical crossmatching. Verification cryptographically signs the donor&apos;s digital pass.
+                </p>
+              </div>
+
+              <DialogFooter className="pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setVerifyModalOpen(false)}
+                  disabled={verifyingBlood}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={verifyingBlood}
+                  className={verifyForm.action === 'reject' ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}
+                >
+                  {verifyingBlood
+                    ? 'Submitting…'
+                    : verifyForm.action === 'reject'
+                    ? 'Reject Correction Request'
+                    : 'Certify & Sign Blood Group'}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1140,11 +1478,36 @@ export default function DonorsPage() {
                   <div>
                     <h4 className="font-bold text-base text-foreground">{verifiedDonor.name}</h4>
                     <p className="text-xs text-muted-foreground">{verifiedDonor.phone}</p>
+                    {verifiedDonor.ninMasked && (
+                      <p className="text-[11px] text-muted-foreground font-mono">{verifiedDonor.ninMasked}</p>
+                    )}
                   </div>
-                  <Badge className="bg-red-100 text-red-800 text-base font-bold px-3 py-1">
-                    {verifiedDonor.bloodGroup}
-                  </Badge>
+                  <div className="text-right">
+                    <Badge className="bg-red-100 text-red-800 text-base font-bold px-3 py-1">
+                      {verifiedDonor.bloodGroup}
+                    </Badge>
+                  </div>
                 </div>
+
+                {/* Blood Group Verification Status Banner */}
+                {verifiedDonor.bloodGroupVerificationStatus === 'verified' ? (
+                  <div className="bg-emerald-50 border border-emerald-300 rounded-lg p-2.5 text-xs text-emerald-900 flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                    <span>
+                      <strong>Lab-Verified Blood Type ({verifiedDonor.bloodGroup})</strong> — Confirmed by hospital laboratory testing.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3 text-xs text-amber-900 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                      <span>WARNING: Self-Reported / Unverified Blood Group</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed">
+                      Donor reported <strong>{verifiedDonor.bloodGroup}</strong>. Mandatory confirmatory tube agglutination typing must be conducted prior to phlebotomy collection or clinical allocation.
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 pt-1">
                   <span className="text-xs text-muted-foreground">Eligibility:</span>
@@ -1152,8 +1515,8 @@ export default function DonorsPage() {
                 </div>
 
                 {verifiedDonor.deferralReason && (
-                  <div className="text-xs text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200">
-                    <strong>Notice:</strong> {verifiedDonor.deferralReason}
+                  <div className="text-xs text-red-700 bg-red-50 p-2.5 rounded-lg border border-red-200">
+                    <strong className="font-semibold">Clinical Deferral:</strong> {verifiedDonor.deferralReason}
                   </div>
                 )}
 

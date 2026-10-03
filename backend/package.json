@@ -10,6 +10,7 @@
     "backfill:batches": "node scripts/backfillBloodBatches.js",
     "seed:admin": "node scripts/seedAdmin.js",
     "seed:donors": "node scripts/seedDonors.js",
+    "seed:realistic": "node scripts/seedRealisticData.js",
     "ml": "cd ../ml-service && uvicorn app:app --port 8100 --reload"
   },
   "keywords": [],

@@ -34,3 +34,28 @@ test('summarizeRequests: delivered without deliveredAt is excluded from avg', ()
   assert.strictEqual(r.delivered, 2);
   assert.strictEqual(r.avgDeliveryHours, 6); // only the one with a timestamp
 });
+
+test('summarizeRequests: chronological anomalies (deliveredAt < createdAt) are filtered out, never negative', () => {
+  const now = Date.now();
+  const list = [
+    // Corrupted anomaly where deliveredAt is before createdAt
+    { deliveryStatus: 'delivered', createdAt: new Date(now), deliveredAt: new Date(now - h(19)) },
+    // Valid delivery: 4 hours
+    { deliveryStatus: 'delivered', createdAt: new Date(now - h(4)), deliveredAt: new Date(now) },
+  ];
+  const r = summarizeRequests(list);
+  assert.strictEqual(r.delivered, 2);
+  assert.strictEqual(r.avgDeliveryHours, 4); // ignores the negative anomaly
+});
+
+test('summarizeRequests: clamps fast deliveries to a minimum of 0.1h', () => {
+  const now = Date.now();
+  const list = [
+    // Delivered 30 seconds after creation
+    { deliveryStatus: 'delivered', createdAt: new Date(now - 30 * 1000), deliveredAt: new Date(now) },
+  ];
+  const r = summarizeRequests(list);
+  assert.strictEqual(r.delivered, 1);
+  assert.strictEqual(r.avgDeliveryHours, 0.1);
+});
+

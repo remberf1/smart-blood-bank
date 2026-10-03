@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const DonationAppointment = require('../models/DonationAppointment');
 const Hospital = require('../models/Hospital');
+const Donor = require('../models/Donor');
 const { auth } = require('../middleware/auth');
 const { allowRoles, canAccessHospital } = require('../middleware/roles');
 const { notifyAppointmentScheduled } = require('../services/notificationService');
@@ -221,9 +222,45 @@ router.put('/:id/status', auth, allowRoles('admin', 'superadmin', 'staff'), asyn
       return res.status(403).json({ error: "You can only manage your own hospital's appointments" });
     }
 
+    if (status === 'completed') {
+      const scheduledDate = appointment.assignedDate || appointment.appointmentDate;
+      if (scheduledDate) {
+        const apptDateMidnight = new Date(scheduledDate);
+        apptDateMidnight.setHours(0, 0, 0, 0);
+        const todayMidnight = new Date();
+        todayMidnight.setHours(0, 0, 0, 0);
+        if (apptDateMidnight.getTime() > todayMidnight.getTime()) {
+          return res.status(400).json({
+            error: 'Cannot mark an appointment as completed before its scheduled date.',
+          });
+        }
+      }
+    }
+
     appointment.status = status;
     appointment.updatedAt = Date.now();
     await appointment.save();
+
+    logAudit(req.user, 'appointment.status_update', {
+      entity: 'DonationAppointment',
+      entityId: appointment._id,
+      hospitalId: appointment.hospitalId,
+      summary: `Updated appointment status to ${status}`,
+    });
+
+    // If marked completed, update donor's clinical deferral & last donation record
+    if (status === 'completed' && appointment.donorId) {
+      const donor = await Donor.findById(appointment.donorId);
+      if (donor) {
+        donor.lastDonationDate = new Date();
+        donor.eligibilityStatus = 'deferred';
+        const dType = appointment.donationType || donor.donationTypePreference || 'WHOLE_BLOOD';
+        const days = dType === 'PLATELET_APHERESIS' ? 14 : dType === 'PLASMA_APHERESIS' ? 28 : 90;
+        donor.deferralReason = `${days} days waiting period after ${dType.replace(/_/g, ' ').toLowerCase()} donation`;
+        await donor.save();
+      }
+    }
+
     res.json(appointment);
   } catch (err) {
     console.error(err);
