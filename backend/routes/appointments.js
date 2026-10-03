@@ -147,6 +147,46 @@ router.put('/:id/schedule', auth, allowRoles('admin', 'superadmin', 'staff'), as
       return res.status(400).json({ error: 'Invalid scheduledDate format' });
     }
 
+    const donor = await Donor.findById(appointment.donorId?._id || appointment.donorId);
+    if (!donor) return res.status(404).json({ error: 'Associated donor not found' });
+
+    // 1. Clinical Deferral Guard: Prevent scheduling during active recovery period
+    const minIntervalDays = appointment.donationType === 'PLATELET_APHERESIS' ? 14 : appointment.donationType === 'PLASMA_APHERESIS' ? 28 : 90;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    if (donor.eligibilityStatus === 'ineligible') {
+      return res.status(403).json({
+        error: `Cannot schedule appointment: Donor is medically ineligible (${donor.deferralReason || 'Clinical deferral by staff'}).`,
+      });
+    }
+
+    if (donor.lastDonationDate) {
+      const eligibleDate = new Date(new Date(donor.lastDonationDate).getTime() + minIntervalDays * DAY_MS);
+      if (targetDate < eligibleDate) {
+        return res.status(403).json({
+          error: `Cannot schedule appointment: Donor is in mandatory physiological recovery until ${eligibleDate.toLocaleDateString('en-GB')} (${minIntervalDays}-day rest interval). Scheduled date of ${targetDate.toLocaleDateString('en-GB')} violates clinical donor safety.`,
+          nextEligibleDate: eligibleDate,
+        });
+      }
+    } else if (donor.eligibilityStatus === 'deferred') {
+      return res.status(403).json({
+        error: `Cannot schedule appointment: Donor is currently deferred (${donor.deferralReason || 'Clinical deferral'}).`,
+      });
+    }
+
+    // 2. Prevent multiple active scheduled appointments for the same donor
+    const conflictingAppt = await DonationAppointment.findOne({
+      _id: { $ne: appointment._id },
+      donorId: donor._id,
+      status: 'scheduled',
+    }).populate('hospitalId', 'name');
+
+    if (conflictingAppt) {
+      return res.status(409).json({
+        error: `Cannot schedule appointment: Donor already holds a confirmed appointment at ${conflictingAppt.hospitalId?.name || 'another facility'} on ${new Date(conflictingAppt.assignedDate || conflictingAppt.appointmentDate).toLocaleDateString('en-GB')}. Each donor may only hold 1 active appointment.`,
+      });
+    }
+
     const startOfDay = new Date(targetDate);
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(targetDate);

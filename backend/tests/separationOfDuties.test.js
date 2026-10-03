@@ -150,20 +150,24 @@ test('Inter-Hospital Logistics: Requisition delivery requires an allocated suppl
 });
 
 test('Donor Appointments: Deferral intervals and donation component types', () => {
-  const validateAppointmentEligibility = (donor, donationType, existingActiveAppt) => {
+  const validateAppointmentEligibility = (donor, donationType, existingActiveAppt, requestedApptDate) => {
     if (donor.eligibilityStatus === 'ineligible') {
       return { ok: false, error: 'Ineligible to donate' };
     }
 
     const validDonationTypes = ['WHOLE_BLOOD', 'PLATELET_APHERESIS', 'PLASMA_APHERESIS'];
     const chosenType = validDonationTypes.includes(donationType) ? donationType : 'WHOLE_BLOOD';
-    const minDays = chosenType === 'PLATELET_APHERESIS' ? 14 : chosenType === 'PLASMA_APHERESIS' ? 28 : 56;
+    const minDays = chosenType === 'PLATELET_APHERESIS' ? 14 : chosenType === 'PLASMA_APHERESIS' ? 28 : 90;
     const DAY_MS = 24 * 60 * 60 * 1000;
 
+    const apptDate = requestedApptDate ? new Date(requestedApptDate) : new Date();
+
     if (donor.lastDonationDate) {
-      const elapsedDays = Math.floor((Date.now() - new Date(donor.lastDonationDate).getTime()) / DAY_MS);
-      if (elapsedDays < minDays) {
-        return { ok: false, error: `Must wait at least ${minDays} days between donations`, daysRemaining: minDays - elapsedDays };
+      const eligibleDate = new Date(new Date(donor.lastDonationDate).getTime() + minDays * DAY_MS);
+      const now = new Date();
+      if (now < eligibleDate || apptDate < eligibleDate) {
+        const remainingDays = Math.max(1, Math.ceil((eligibleDate.getTime() - now.getTime()) / DAY_MS));
+        return { ok: false, error: `Must wait at least ${minDays} days between donations`, daysRemaining: remainingDays, eligibleDate };
       }
     }
 
@@ -178,23 +182,29 @@ test('Donor Appointments: Deferral intervals and donation component types', () =
     return { ok: true, donationType: chosenType };
   };
 
-  // 1. Donor who donated whole blood 10 days ago is rejected (needs 56 days)
+  // 1. Donor who donated whole blood 10 days ago is rejected under 90-day physiological standard
   const recentWholeBloodDonor = {
     eligibilityStatus: 'deferred',
     lastDonationDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
   };
   const res1 = validateAppointmentEligibility(recentWholeBloodDonor, 'WHOLE_BLOOD', null);
   assert.strictEqual(res1.ok, false);
-  assert.strictEqual(res1.daysRemaining, 46);
+  assert.strictEqual(res1.daysRemaining, 80);
 
-  // 2. Donor with active appointment cannot create duplicate offer
+  // 2. Reject booking an appointment tomorrow when 90-day deferral extends into next year
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const resTomorrow = validateAppointmentEligibility(recentWholeBloodDonor, 'WHOLE_BLOOD', null, tomorrow);
+  assert.strictEqual(resTomorrow.ok, false);
+  assert.strictEqual(resTomorrow.daysRemaining, 80);
+
+  // 3. Donor with active appointment cannot create duplicate offer (Max 1 active appointment)
   const eligibleDonor = { eligibilityStatus: 'eligible' };
   const activeAppt = { status: 'pending', hospitalId: 'hosp_uch' };
   const res2 = validateAppointmentEligibility(eligibleDonor, 'WHOLE_BLOOD', activeAppt);
   assert.strictEqual(res2.ok, false);
   assert.strictEqual(res2.error, 'Active appointment already exists');
 
-  // 3. Eligible donor can book specific component (Platelet Apheresis)
+  // 4. Eligible donor can book specific component (Platelet Apheresis)
   const res3 = validateAppointmentEligibility(eligibleDonor, 'PLATELET_APHERESIS', null);
   assert.strictEqual(res3.ok, true);
   assert.strictEqual(res3.donationType, 'PLATELET_APHERESIS');

@@ -28,8 +28,8 @@ router.post('/', authDonor, async (req, res) => {
       });
     }
 
-    // 2. Donation Type & Clinical Deferral Interval Check (WHO / NBTS)
-    // Whole blood: minimum 56 days (8 weeks)
+    // 2. Donation Type & Clinical Deferral Interval Check (WHO / NBSC)
+    // Whole blood: minimum 90 days
     // Platelet apheresis: minimum 14 days
     // Plasma apheresis: minimum 28 days
     const validDonationTypes = ['WHOLE_BLOOD', 'PLATELET_APHERESIS', 'PLASMA_APHERESIS'];
@@ -37,41 +37,8 @@ router.post('/', authDonor, async (req, res) => {
       ? donationType
       : (donor.donationTypePreference || 'WHOLE_BLOOD');
 
-    const minIntervalDays = chosenDonationType === 'PLATELET_APHERESIS' ? 14 : chosenDonationType === 'PLASMA_APHERESIS' ? 28 : 56;
+    const minIntervalDays = chosenDonationType === 'PLATELET_APHERESIS' ? 14 : chosenDonationType === 'PLASMA_APHERESIS' ? 28 : 90;
     const DAY_MS = 24 * 60 * 60 * 1000;
-
-    if (donor.lastDonationDate) {
-      const elapsedDays = Math.floor((Date.now() - new Date(donor.lastDonationDate).getTime()) / DAY_MS);
-      if (elapsedDays < minIntervalDays) {
-        const eligibleDate = new Date(new Date(donor.lastDonationDate).getTime() + minIntervalDays * DAY_MS);
-        return res.status(403).json({
-          error: `Under National Blood Service safety standards, donors must observe a minimum waiting period of ${minIntervalDays} days after a donation. Your last donation was on ${new Date(donor.lastDonationDate).toLocaleDateString('en-GB')}. Your next eligible donation date is ${eligibleDate.toLocaleDateString('en-GB')} (${minIntervalDays - elapsedDays} day(s) remaining).`,
-        });
-      } else if (donor.eligibilityStatus === 'deferred' && (!donor.deferralReason || donor.deferralReason.toLowerCase().includes('waiting period') || donor.deferralReason.toLowerCase().includes('days'))) {
-        // Recovery window elapsed — restore eligible status
-        donor.eligibilityStatus = 'eligible';
-        donor.deferralReason = undefined;
-        await donor.save();
-      }
-    }
-
-    if (donor.eligibilityStatus === 'deferred') {
-      return res.status(403).json({
-        error: `You are currently deferred: ${donor.deferralReason || 'Temporary clinical deferral. Please consult blood bank staff'}.`,
-      });
-    }
-
-    // 3. Prevent duplicate active appointments
-    const activeAppt = await DonationAppointment.findOne({
-      donorId,
-      status: { $in: ['pending', 'scheduled'] },
-    }).populate('hospitalId', 'name');
-
-    if (activeAppt) {
-      return res.status(409).json({
-        error: `You already have an active donation appointment (${activeAppt.status === 'scheduled' ? 'confirmed' : 'pending assignment'}) at ${activeAppt.hospitalId?.name || 'a hospital'}. Please attend or cancel it before booking another.`,
-      });
-    }
 
     let apptDate;
     const todayStart = new Date();
@@ -84,6 +51,42 @@ router.post('/', authDonor, async (req, res) => {
       }
     } else {
       apptDate = new Date();
+    }
+
+    if (donor.lastDonationDate) {
+      const eligibleDate = new Date(new Date(donor.lastDonationDate).getTime() + minIntervalDays * DAY_MS);
+      const now = new Date();
+      if (now < eligibleDate || apptDate < eligibleDate) {
+        const remainingDays = Math.max(1, Math.ceil((eligibleDate.getTime() - now.getTime()) / DAY_MS));
+        return res.status(403).json({
+          error: `Under National Blood Service Commission (NBSC) and WHO safety standards, donors must observe a minimum rest period of ${minIntervalDays} days after a donation to prevent anemia. Your last donation was on ${new Date(donor.lastDonationDate).toLocaleDateString('en-GB')}. Your next eligible donation date is ${eligibleDate.toLocaleDateString('en-GB')} (${remainingDays} day(s) remaining). The requested date of ${apptDate.toLocaleDateString('en-GB')} cannot be booked.`,
+          nextEligibleDate: eligibleDate,
+          daysRemaining: remainingDays,
+        });
+      } else if (donor.eligibilityStatus === 'deferred' && (!donor.deferralReason || donor.deferralReason.toLowerCase().includes('waiting period') || donor.deferralReason.toLowerCase().includes('days'))) {
+        // Recovery window elapsed — restore eligible status
+        donor.eligibilityStatus = 'eligible';
+        donor.deferralReason = undefined;
+        await donor.save();
+      }
+    }
+
+    if (donor.eligibilityStatus === 'deferred') {
+      return res.status(403).json({
+        error: `You are currently deferred: ${donor.deferralReason || 'Temporary clinical deferral. Please consult blood bank staff'}. Booking is locked until clinical clearance.`,
+      });
+    }
+
+    // 3. Prevent duplicate active appointments (Strict max 1 active appointment limit)
+    const activeAppt = await DonationAppointment.findOne({
+      donorId,
+      status: { $in: ['pending', 'scheduled'] },
+    }).populate('hospitalId', 'name');
+
+    if (activeAppt) {
+      return res.status(409).json({
+        error: `You already have an active donation appointment (${activeAppt.status === 'scheduled' ? 'confirmed' : 'pending assignment'}) at ${activeAppt.hospitalId?.name || 'a hospital'}. Hospital phlebotomy capacity limits allow a maximum of 1 active appointment per donor. Please attend or cancel it before booking another.`,
+      });
     }
 
     const appointment = new DonationAppointment({

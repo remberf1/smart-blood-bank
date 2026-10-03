@@ -35,5 +35,12 @@ const donationAppointmentSchema = new mongoose.Schema({
 });
 
 donationAppointmentSchema.index({ hospitalId: 1, appointmentDate: 1, status: 1 });
+donationAppointmentSchema.index(
+  { donorId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: { $in: ['pending', 'scheduled'] } },
+  }
+);
 
 module.exports = mongoose.model('DonationAppointment', donationAppointmentSchema);

@@ -3,6 +3,7 @@ const router = express.Router();
 const QRCode = require("qrcode");
 const jwt = require("jsonwebtoken");
 const Donor = require("../models/Donor");
+const DonationAppointment = require("../models/DonationAppointment");
 const { auth, isAdmin } = require("../middleware/auth");
 const { allowRoles } = require("../middleware/roles");
 const { formatNigerianPhone } = require("../utils/phone");
@@ -91,6 +92,27 @@ async function recordDonationForDonor(donor, hospitalId, triageData = null) {
   // Tag the donor's home hospital on their first recorded donation.
   if (!donor.homeHospitalId) donor.homeHospitalId = hospitalId;
   await donor.save();
+
+  // Medically cancel all active appointments for this donor to maintain clinical safety during 90-day deferral
+  const activeAppts = await DonationAppointment.find({
+    donorId: donor._id,
+    status: { $in: ['pending', 'scheduled'] },
+  });
+  for (const appt of activeAppts) {
+    appt.status = 'cancelled';
+    appt.notes = (appt.notes || '') + ` [System medical safety: Cancelled due to donation intake recorded on ${new Date().toLocaleDateString('en-GB')}. Donor is deferred for 90 days].`;
+    await appt.save();
+    await logAudit(
+      { email: 'system.phlebotomy@smartbloodbank.com', role: 'system', hospitalId },
+      'appointment.auto_cancel_on_donation',
+      {
+        entity: 'DonationAppointment',
+        entityId: appt._id,
+        hospitalId,
+        summary: `Medically cancelled active appointment for ${donor.name} due to new donation recorded. Donor is deferred for 90 days.`,
+      }
+    ).catch(() => {});
+  }
 
   const componentType = triageData?.componentType ||
     (donor.donationTypePreference === 'PLATELET_APHERESIS' ? 'PLATELET_CONCENTRATE' :
