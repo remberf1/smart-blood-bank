@@ -583,6 +583,9 @@ async function seed() {
   for (const d of donorDefinitions) {
     const donorDoc = new Donor({
       ...d,
+      isVerified: true,
+      emailVerified: true,
+      phoneVerified: true,
       password: 'DonorPassword123!',
       nonRemunerationDeclared: true,
       sosOptIn: true,

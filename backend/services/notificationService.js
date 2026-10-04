@@ -67,14 +67,20 @@ const DKIM_DOMAIN = process.env.DKIM_DOMAIN || '';
 const DKIM_SELECTOR = process.env.DKIM_SELECTOR || '';
 const DKIM_PRIVATE_KEY = (process.env.DKIM_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const isGmail = process.env.SMTP_SERVICE === 'gmail' || (SMTP_HOST && SMTP_HOST.toLowerCase().includes('gmail'));
 const EMAIL_ENABLED =
-  process.env.EMAIL_ENABLED !== 'false' && Boolean((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS);
+  process.env.EMAIL_ENABLED !== 'false' &&
+  Boolean(RESEND_API_KEY || ((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS));
 
 let mailer = null;
-if (EMAIL_ENABLED) {
+if (EMAIL_ENABLED && ((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS)) {
   try {
-    const port = Number(SMTP_PORT) || 587;
+    let port = Number(SMTP_PORT) || 587;
+    if (port === 456) {
+      console.warn('⚠️ [SMTP] Port 456 is an invalid SMTP port (likely a typo for 465 or 587). Auto-correcting to standard STARTTLS port 587.');
+      port = 587;
+    }
     const isSecure = port === 465;
     const cleanPass = isGmail && SMTP_PASS ? SMTP_PASS.replace(/\s+/g, '') : SMTP_PASS;
 
@@ -152,12 +158,47 @@ async function sendWhatsApp(toPhone, body) {
 }
 
 // Send an email. Never throws — returns a result object.
-// `html` is optional; when provided it's sent alongside `text` as a multipart
-// message so HTML-capable clients see the branded version and others fall back
-// to plain text (better deliverability, graceful degradation).
+// Supports Resend HTTPS API (port 443) and SMTP (Nodemailer) with auto-fallback.
 async function sendEmail(to, subject, text, html) {
   if (!to) return { sent: false, reason: 'no-email' };
-  if (!EMAIL_ENABLED || !mailer) {
+  if (!EMAIL_ENABLED) {
+    console.log(`[email off] would email ${to}: ${subject}`);
+    return { sent: false, reason: 'disabled' };
+  }
+
+  // 1. Try Resend via HTTPS (Port 443 — guaranteed open on all cloud platforms)
+  if (RESEND_API_KEY) {
+    try {
+      const fromAddr = EMAIL_FROM.includes('<')
+        ? EMAIL_FROM
+        : `Smart Blood Bank <${EMAIL_FROM || 'onboarding@resend.dev'}>`;
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromAddr,
+          to: [to],
+          subject,
+          text,
+          html,
+          ...(REPLY_TO ? { reply_to: REPLY_TO } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.id) {
+        return { sent: true, id: data.id };
+      }
+      console.warn('Resend send failed, attempting SMTP fallback:', data);
+    } catch (resendErr) {
+      console.warn('Resend request failed, attempting SMTP fallback:', resendErr.message);
+    }
+  }
+
+  // 2. Fall back to SMTP
+  if (!mailer) {
     console.log(`[email off] would email ${to}: ${subject}`);
     return { sent: false, reason: 'disabled' };
   }
