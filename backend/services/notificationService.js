@@ -68,10 +68,23 @@ const DKIM_SELECTOR = process.env.DKIM_SELECTOR || '';
 const DKIM_PRIVATE_KEY = (process.env.DKIM_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+const HAS_HTTP_EMAIL_PROVIDER = Boolean(RESEND_API_KEY || BREVO_API_KEY || SENDGRID_API_KEY);
 const isGmail = process.env.SMTP_SERVICE === 'gmail' || (SMTP_HOST && SMTP_HOST.toLowerCase().includes('gmail'));
 const EMAIL_ENABLED =
   process.env.EMAIL_ENABLED !== 'false' &&
-  Boolean(RESEND_API_KEY || ((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS));
+  Boolean(HAS_HTTP_EMAIL_PROVIDER || ((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS));
+
+if (process.env.NODE_ENV === 'production' && !HAS_HTTP_EMAIL_PROVIDER && EMAIL_ENABLED) {
+  console.warn(
+    '⚠️ [Email Notice] Direct SMTP (ports 587/465) is blocked by the Render Free Tier egress firewall.\n' +
+    '   To send emails from Render without timeouts, add a free HTTP email API key:\n' +
+    '   - RESEND_API_KEY (from resend.com - 3000 free emails/mo)\n' +
+    '   - BREVO_API_KEY (from brevo.com - 300 free emails/day)\n' +
+    '   - SENDGRID_API_KEY (from sendgrid.com - 100 free emails/day)'
+  );
+}
 
 let mailer = null;
 if (EMAIL_ENABLED && ((SMTP_HOST || isGmail) && SMTP_USER && SMTP_PASS)) {
@@ -157,8 +170,25 @@ async function sendWhatsApp(toPhone, body) {
   }
 }
 
+/**
+ * Parses "Name <email@domain.com>" or "email@domain.com" into { name, email }
+ */
+function parseEmailSender(raw) {
+  if (!raw) return { name: 'Smart Blood Bank', email: 'notifications@smartbloodbank.org' };
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(?:"?([^"]*)"?\s)?(?:<?(.+@[^>]+)>?)$/);
+  if (match) {
+    return { name: match[1]?.trim() || 'Smart Blood Bank', email: match[2]?.trim() };
+  }
+  return { name: 'Smart Blood Bank', email: trimmed };
+}
+
 // Send an email. Never throws — returns a result object.
-// Supports Resend HTTPS API (port 443) and SMTP (Nodemailer) with auto-fallback.
+// Priority:
+// 1. Resend REST API (HTTPS port 443 — guaranteed open on Render Free Tier)
+// 2. Brevo REST API (HTTPS port 443)
+// 3. SendGrid REST API (HTTPS port 443)
+// 4. SMTP (Nodemailer on port 587/465 — blocked on Render Free Tier)
 async function sendEmail(to, subject, text, html) {
   if (!to) return { sent: false, reason: 'no-email' };
   if (!EMAIL_ENABLED) {
@@ -166,7 +196,9 @@ async function sendEmail(to, subject, text, html) {
     return { sent: false, reason: 'disabled' };
   }
 
-  // 1. Try Resend via HTTPS (Port 443 — guaranteed open on all cloud platforms)
+  const { name: fromName, email: fromEmail } = parseEmailSender(EMAIL_FROM);
+
+  // 1. Try Resend via HTTPS (Port 443)
   if (RESEND_API_KEY) {
     try {
       const fromAddr = EMAIL_FROM.includes('<')
@@ -189,15 +221,77 @@ async function sendEmail(to, subject, text, html) {
       });
       const data = await res.json();
       if (res.ok && data?.id) {
-        return { sent: true, id: data.id };
+        console.log(`✅ [Resend] Email sent to ${to} (id: ${data.id})`);
+        return { sent: true, id: data.id, provider: 'resend' };
       }
-      console.warn('Resend send failed, attempting SMTP fallback:', data);
+      console.warn('⚠️ [Resend] Send failed:', data);
     } catch (resendErr) {
-      console.warn('Resend request failed, attempting SMTP fallback:', resendErr.message);
+      console.warn('⚠️ [Resend] Request failed:', resendErr.message);
     }
   }
 
-  // 2. Fall back to SMTP
+  // 2. Try Brevo via HTTPS (Port 443)
+  if (BREVO_API_KEY) {
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'api-key': BREVO_API_KEY,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { name: fromName, email: fromEmail },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html || text,
+          textContent: text,
+          ...(REPLY_TO ? { replyTo: { email: REPLY_TO } } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.messageId) {
+        console.log(`✅ [Brevo] Email sent to ${to} (messageId: ${data.messageId})`);
+        return { sent: true, id: data.messageId, provider: 'brevo' };
+      }
+      console.warn('⚠️ [Brevo] Send failed:', data);
+    } catch (brevoErr) {
+      console.warn('⚠️ [Brevo] Request failed:', brevoErr.message);
+    }
+  }
+
+  // 3. Try SendGrid via HTTPS (Port 443)
+  if (SENDGRID_API_KEY) {
+    try {
+      const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SENDGRID_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to }] }],
+          from: { email: fromEmail, name: fromName },
+          subject,
+          content: [
+            { type: 'text/plain', value: text },
+            ...(html ? [{ type: 'text/html', value: html }] : []),
+          ],
+          ...(REPLY_TO ? { reply_to: { email: REPLY_TO } } : {}),
+        }),
+      });
+      if (res.status >= 200 && res.status < 300) {
+        console.log(`✅ [SendGrid] Email sent to ${to}`);
+        return { sent: true, provider: 'sendgrid' };
+      }
+      const data = await res.text();
+      console.warn('⚠️ [SendGrid] Send failed:', data);
+    } catch (sgErr) {
+      console.warn('⚠️ [SendGrid] Request failed:', sgErr.message);
+    }
+  }
+
+  // 4. Fall back to SMTP (Nodemailer)
   if (!mailer) {
     console.log(`[email off] would email ${to}: ${subject}`);
     return { sent: false, reason: 'disabled' };
@@ -209,7 +303,8 @@ async function sendEmail(to, subject, text, html) {
     const headers = commonMailHeaders();
     if (headers) msg.headers = headers;
     const info = await mailer.sendMail(msg);
-    return { sent: true, id: info.messageId };
+    console.log(`✅ [SMTP] Email sent to ${to} (id: ${info.messageId})`);
+    return { sent: true, id: info.messageId, provider: 'smtp' };
   } catch (err) {
     console.error(`Email to ${to} failed:`, err.message);
     return { sent: false, reason: 'error', error: err.message };
