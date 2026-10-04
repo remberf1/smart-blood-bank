@@ -74,20 +74,22 @@ const EMAIL_ENABLED =
 let mailer = null;
 if (EMAIL_ENABLED) {
   try {
-    const port = Number(SMTP_PORT) || (isGmail ? 465 : 587);
-    const secure = port === 465;
+    const port = Number(SMTP_PORT) || 587;
+    const isSecure = port === 465;
+    const cleanPass = isGmail && SMTP_PASS ? SMTP_PASS.replace(/\s+/g, '') : SMTP_PASS;
 
     const transport = {
       host: isGmail ? (SMTP_HOST || 'smtp.gmail.com') : SMTP_HOST,
       port,
-      secure,
-      pool: true,
-      maxConnections: 3,
-      maxMessages: 100,
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 30000,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
+      secure: isSecure,
+      requireTLS: !isSecure,
+      auth: { user: SMTP_USER, pass: cleanPass },
+      tls: {
+        rejectUnauthorized: true,
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     };
     if (DKIM_DOMAIN && DKIM_SELECTOR && DKIM_PRIVATE_KEY) {
       transport.dkim = {
