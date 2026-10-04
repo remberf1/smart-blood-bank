@@ -60,17 +60,23 @@ async function initBaileys() {
 
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        const isReplaced = statusCode === DisconnectReason.connectionReplaced;
+        const shouldReconnect = !isLoggedOut && !isReplaced;
         connectionStatus = 'disconnected';
         connectedUser = null;
 
         console.log(`⚠️ [Baileys] WhatsApp connection closed (status: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
-        if (statusCode === DisconnectReason.loggedOut) {
+        if (isLoggedOut) {
           console.log('🔒 [Baileys] Logged out from phone. Clearing session...');
           await clearSession().catch(() => {});
           rawQr = null;
           qrDataUrl = null;
+        }
+
+        if (isReplaced) {
+          console.warn('⚠️ [Baileys] Connection was replaced by another active server instance (e.g. Render vs Localhost). Halting auto-reconnect to prevent collision loop.');
         }
 
         if (shouldReconnect) {

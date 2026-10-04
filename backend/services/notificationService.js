@@ -1,9 +1,30 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+const dns = require('dns');
 const twilio = require('twilio');
 const nodemailer = require('nodemailer');
 const { normalizePhone } = require('../utils/phone');
 const DonationAppointment = require('../models/DonationAppointment');
+
+// Enforce IPv4 resolution order globally across Node
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
+// Enforce IPv4 in Nodemailer's internal resolver to prevent ENETUNREACH errors
+// on cloud platforms (e.g., Render, Docker) where outbound IPv6 is unreachable.
+try {
+  const nodemailerShared = require('nodemailer/lib/shared');
+  if (nodemailerShared && nodemailerShared.networkInterfaces) {
+    const v4Only = {};
+    for (const [k, addrs] of Object.entries(nodemailerShared.networkInterfaces)) {
+      v4Only[k] = (addrs || []).filter((a) => a.family === 'IPv4' || a.family === 4);
+    }
+    nodemailerShared.networkInterfaces = v4Only;
+  }
+} catch (e) {
+  // Best effort
+}
 
 const SID = process.env.TWILIO_ACCOUNT_SID;
 const TOKEN = process.env.TWILIO_AUTH_TOKEN;
@@ -52,17 +73,12 @@ const EMAIL_ENABLED =
 let mailer = null;
 if (EMAIL_ENABLED) {
   try {
-    const transport = isGmail
-      ? {
-          service: 'gmail',
-          auth: { user: SMTP_USER, pass: SMTP_PASS },
-        }
-      : {
-          host: SMTP_HOST,
-          port: SMTP_PORT,
-          secure: SMTP_PORT === 465, // implicit TLS on 465, STARTTLS otherwise
-          auth: { user: SMTP_USER, pass: SMTP_PASS },
-        };
+    const transport = {
+      host: isGmail ? (SMTP_HOST || 'smtp.gmail.com') : SMTP_HOST,
+      port: Number(SMTP_PORT) || (isGmail ? 465 : 587),
+      secure: (Number(SMTP_PORT) || (isGmail ? 465 : 587)) === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    };
     if (DKIM_DOMAIN && DKIM_SELECTOR && DKIM_PRIVATE_KEY) {
       transport.dkim = {
         domainName: DKIM_DOMAIN,

@@ -1,4 +1,10 @@
 require('dotenv').config();
+const dns = require('dns');
+
+// Prioritize IPv4 across the entire runtime to prevent ENETUNREACH in containers
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 // Fail fast on missing/weak required configuration rather than booting insecure.
 const missingEnv = ['MONGODB_URI', 'JWT_SECRET'].filter((k) => !process.env[k]);
@@ -30,6 +36,7 @@ app.use(
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
         connectSrc: ["'self'", '*'],
@@ -41,22 +48,55 @@ app.use(
 // Silently handle browser favicon requests
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// CORS: restrict to configured frontend origin(s).
-// FRONTEND_ORIGINS is a comma-separated list; falls back to localhost dev.
-const allowedOrigins = (process.env.FRONTEND_ORIGINS || 'http://localhost:3000')
+// CORS: allow configured frontend origins, Render cloud deployments (*.onrender.com), and local dev.
+const envOrigins = (process.env.FRONTEND_ORIGINS || '')
   .split(',')
-  .map((o) => o.trim())
+  .map((o) => o.trim().replace(/\/+$/, ''))
   .filter(Boolean);
+
+const defaultOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5000',
+];
+
+const allowedOrigins = Array.from(new Set([...envOrigins, ...defaultOrigins]));
+
+function isOriginAllowed(origin) {
+  if (!origin) return true; // non-browser clients (curl, mobile, webhooks, Twilio, health checks)
+  const clean = origin.trim().replace(/\/+$/, '');
+
+  // Explicitly configured origins (including local dev and FRONTEND_ORIGINS)
+  if (allowedOrigins.includes(clean)) return true;
+
+  // Allow all Render services (*.onrender.com) so dynamic service hashes (e.g. sbb-web-xxxx.onrender.com) match
+  if (/^https:\/\/[a-zA-Z0-9_-]+\.onrender\.com$/i.test(clean)) return true;
+
+  // Allow any localhost / 127.0.0.1 port (e.g. localhost:3000, 3001, etc.)
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(clean)) return true;
+
+  // Allow Vercel or Netlify preview deployments
+  if (/^https:\/\/[a-zA-Z0-9_-]+\.(vercel\.app|netlify\.app)$/i.test(clean)) return true;
+
+  return false;
+}
 
 app.use(
   cors({
     origin(origin, callback) {
-      // allow non-browser clients (curl, Twilio webhooks, health checks) with no Origin
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error('Not allowed by CORS'));
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+      console.warn(`[CORS] Blocked request from unauthorized origin: "${origin}"`);
+      return callback(null, false);
     },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token', 'X-Requested-With'],
   })
 );
+
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

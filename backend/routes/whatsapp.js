@@ -219,6 +219,17 @@ router.get('/qr', (req, res) => {
         })
         .catch(() => {});
     }, 2500);
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const resetForm = document.getElementById('reset-form');
+      const resetBtn = document.getElementById('reset-btn');
+      if (resetForm && resetBtn) {
+        resetForm.addEventListener('submit', () => {
+          resetBtn.disabled = true;
+          resetBtn.innerText = 'Resetting...';
+        });
+      }
+    });
   </script>
 </head>
 <body>
@@ -226,8 +237,8 @@ router.get('/qr', (req, res) => {
     <div class="brand">🩸 SMART BLOOD BANK</div>
     ${bodyContent}
     <div class="reset-container">
-      <form action="/api/whatsapp/reset" method="POST" style="margin: 0;">
-        <button type="submit" class="btn-reset" onclick="this.disabled=true; this.innerText='Resetting...'; this.form.submit();">
+      <form id="reset-form" action="/api/whatsapp/reset" method="POST" style="margin: 0;">
+        <button id="reset-btn" type="submit" class="btn-reset">
           🔄 Reset Session &amp; Fresh QR
         </button>
       </form>
