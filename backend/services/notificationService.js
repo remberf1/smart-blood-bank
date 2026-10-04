@@ -56,8 +56,8 @@ const REPLY_TO = process.env.SMTP_REPLY_TO || '';
 // A mailto: or https: unsubscribe target. When set, every notification carries
 // List-Unsubscribe (+ one-click) headers — a strong deliverability signal and a
 // requirement for bulk senders under Gmail/Yahoo's 2024 rules.
-const LIST_UNSUBSCRIBE = process.env.SMTP_LIST_UNSUBSCRIBE || '';
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
+const APP_URL = getFrontendBaseUrl();
 
 // Optional self-DKIM signing (only for sending from a domain you control WITHOUT
 // a provider that signs for you — e.g. direct send or a relay that doesn't sign).
@@ -73,10 +73,19 @@ const EMAIL_ENABLED =
 let mailer = null;
 if (EMAIL_ENABLED) {
   try {
+    const port = Number(SMTP_PORT) || (isGmail ? 465 : 587);
+    const secure = port === 465;
+
     const transport = {
       host: isGmail ? (SMTP_HOST || 'smtp.gmail.com') : SMTP_HOST,
-      port: Number(SMTP_PORT) || (isGmail ? 465 : 587),
-      secure: (Number(SMTP_PORT) || (isGmail ? 465 : 587)) === 465,
+      port,
+      secure,
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 30000,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
     };
     if (DKIM_DOMAIN && DKIM_SELECTOR && DKIM_PRIVATE_KEY) {

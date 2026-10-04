@@ -8,10 +8,11 @@ const { normalizePhone } = require('../utils/phone');
 let sock = null;
 let rawQr = null;
 let qrDataUrl = null;
-let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'waiting_for_qr' | 'connected'
+let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'waiting_for_qr' | 'connected' | 'standby'
 let connectedUser = null;
 let reconnectTimer = null;
 let isInitializing = false;
+let qrCycleCount = 0;
 
 const logger = pino({ level: 'silent' });
 
@@ -46,13 +47,18 @@ async function initBaileys() {
         } catch (err) {
           console.error('Failed to generate QR data URL:', err.message);
         }
-        console.log('⚡ [Baileys] New WhatsApp QR code generated. Open /api/whatsapp/qr to scan.');
+        qrCycleCount++;
+        // Log once per cycle to prevent spamming the console every 20 seconds
+        if (qrCycleCount === 1) {
+          console.log('⚡ [Baileys] WhatsApp pairing QR code ready. Open /api/whatsapp/qr to scan.');
+        }
       }
 
       if (connection === 'open') {
         connectionStatus = 'connected';
         rawQr = null;
         qrDataUrl = null;
+        qrCycleCount = 0;
         const userJid = sock.user ? sock.user.id : '';
         connectedUser = userJid ? jidNormalizedUser(userJid).split('@')[0] : 'Linked';
         console.log(`✅ [Baileys] WhatsApp connected successfully as +${connectedUser}!`);
@@ -62,9 +68,11 @@ async function initBaileys() {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
         const isReplaced = statusCode === DisconnectReason.connectionReplaced;
-        const shouldReconnect = !isLoggedOut && !isReplaced;
-        connectionStatus = 'disconnected';
+        const isTimedOut = statusCode === DisconnectReason.timedOut || statusCode === 408;
+        const shouldReconnect = !isLoggedOut && !isReplaced && !isTimedOut;
+        connectionStatus = isTimedOut ? 'standby' : 'disconnected';
         connectedUser = null;
+        qrCycleCount = 0;
 
         console.log(`⚠️ [Baileys] WhatsApp connection closed (status: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
@@ -77,6 +85,12 @@ async function initBaileys() {
 
         if (isReplaced) {
           console.warn('⚠️ [Baileys] Connection was replaced by another active server instance (e.g. Render vs Localhost). Halting auto-reconnect to prevent collision loop.');
+        }
+
+        if (isTimedOut) {
+          rawQr = null;
+          qrDataUrl = null;
+          console.log('⏸️ [Baileys] QR code expired without scan. Paused in standby mode. Open /api/whatsapp/qr to wake up and generate a fresh QR.');
         }
 
         if (shouldReconnect) {

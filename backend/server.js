@@ -205,6 +205,26 @@ app.use('/api/forecast', forecastRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/badges', badgeRoutes);
 
+const { getFrontendBaseUrl } = require('./utils/frontendUrl');
+
+// Gracefully redirect any accidental hits for frontend routes (e.g. password resets or verification links sent before URL fix)
+app.get([
+  '/reset-password',
+  '/donor/reset-password',
+  '/donor/verify',
+  '/verify',
+  '/login',
+  '/donor/login',
+  '/track',
+  '/request',
+  '/sos',
+], (req, res) => {
+  const frontendBase = getFrontendBaseUrl();
+  const target = new URL(req.originalUrl, frontendBase);
+  console.log(`[Redirect] Routing frontend request ${req.originalUrl} -> ${target.toString()}`);
+  return res.redirect(302, target.toString());
+});
+
 // Health check endpoints for Render and uptime monitoring
 app.get(['/', '/health'], (req, res) => {
   res.json({

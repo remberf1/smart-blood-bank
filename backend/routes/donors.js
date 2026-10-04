@@ -268,7 +268,8 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
     await donor.save();
 
     // Trigger multi-channel verification dispatch
-    const appUrl = process.env.APP_URL || 'http://localhost:3000';
+    const { getFrontendBaseUrl } = require('../utils/frontendUrl');
+    const appUrl = getFrontendBaseUrl();
     if (donor.email) {
       const verifyUrl = `${appUrl}/donor/verify?token=${verificationToken}&email=${encodeURIComponent(donor.email)}`;
       const emailContent = buildDonorVerificationEmail({ name: donor.name, verifyUrl, otpCode: phoneOtp });

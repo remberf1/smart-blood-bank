@@ -8,8 +8,7 @@ const { loginSchema, registerUserSchema, updateUserSchema, forgotPasswordSchema,
 const { notifyNewUser, sendEmail, buildPasswordResetEmail } = require('../services/notificationService');
 const { generateResetToken, hashToken } = require('../utils/passwordReset');
 const { logAudit } = require('../services/auditService');
-
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 
 // ==================== REGISTER (Super Admin only - for creating staff) ====================
 router.post('/register', auth, isSuperAdmin, validate(registerUserSchema), async (req, res) => {
@@ -125,7 +124,7 @@ router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res)
       user.resetTokenExpiry = expiry;
       await user.save();
 
-      const resetUrl = `${APP_URL}/reset-password?token=${raw}`;
+      const resetUrl = `${getFrontendBaseUrl()}/reset-password?token=${raw}`;
       const e = buildPasswordResetEmail(user.name, resetUrl);
       // Best-effort: don't fail the request if email is disabled/misconfigured.
       sendEmail(user.email, e.subject, e.text, e.html).catch((err) =>

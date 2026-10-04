@@ -37,6 +37,10 @@ router.get('/status', (req, res) => {
  */
 router.get('/qr', (req, res) => {
   const status = baileysService.getStatus();
+  // Wake up socket on-demand if in standby or disconnected
+  if (!status.connected && !status.hasQr && (status.status === 'standby' || status.status === 'disconnected')) {
+    baileysService.initBaileys().catch(() => {});
+  }
   const qrDataUrl = baileysService.getQrDataUrl();
 
   let bodyContent = '';
@@ -208,12 +212,14 @@ router.get('/qr', (req, res) => {
   </style>
   <script>
     const isInitiallyConnected = ${JSON.stringify(status.connected)};
+    const hadQrInitially = ${Boolean(qrDataUrl)};
     setInterval(() => {
       fetch('/api/whatsapp/status')
         .then(r => r.json())
         .then(d => {
           const nowConnected = Boolean(d.baileys?.connected);
-          if (nowConnected !== isInitiallyConnected) {
+          const hasQrNow = Boolean(d.baileys?.hasQr);
+          if (nowConnected !== isInitiallyConnected || (!hadQrInitially && hasQrNow)) {
             location.reload();
           }
         })

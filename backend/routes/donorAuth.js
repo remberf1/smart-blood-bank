@@ -18,8 +18,7 @@ const { formatNigerianPhone } = require('../utils/phone');
 const DonationAppointment = require('../models/DonationAppointment');
 const { logAudit } = require('../services/auditService');
 const crypto = require('crypto');
-
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 
 // ==================== DONOR LOGIN ====================
 router.post('/login', async (req, res) => {
@@ -91,7 +90,7 @@ router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res)
       donor.resetTokenExpiry = expiry;
       await donor.save();
 
-      const resetUrl = `${APP_URL}/donor/reset-password?token=${raw}`;
+      const resetUrl = `${getFrontendBaseUrl()}/donor/reset-password?token=${raw}`;
       const e = buildPasswordResetEmail(donor.name, resetUrl);
       sendEmail(donor.email, e.subject, e.text, e.html).catch((err) =>
         console.error('Donor reset email failed:', err.message)
@@ -334,7 +333,7 @@ router.post('/resend-code', async (req, res) => {
     await donor.save();
 
     if (donor.email) {
-      const verifyUrl = `${APP_URL}/donor/verify?token=${emailToken}&email=${encodeURIComponent(donor.email)}`;
+      const verifyUrl = `${getFrontendBaseUrl()}/donor/verify?token=${emailToken}&email=${encodeURIComponent(donor.email)}`;
       const emailContent = buildDonorVerificationEmail({ name: donor.name, verifyUrl, otpCode });
       sendEmail(donor.email, emailContent.subject, emailContent.text, emailContent.html).catch((err) =>
         console.warn('Resend verification email failed:', err.message)
