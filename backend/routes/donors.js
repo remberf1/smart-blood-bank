@@ -14,6 +14,7 @@ const { allocateBlood } = require("../services/allocationService");
 const { validate } = require("../middleware/validate");
 const { donorRegisterSchema, verifyBloodGroupSchema } = require("../validators/schemas");
 const { logAudit } = require("../services/auditService");
+const { hashNin } = require("../utils/nin");
 const crypto = require("crypto");
 const {
   sendEmail,
@@ -195,7 +196,13 @@ router.post("/register", validate(donorRegisterSchema), async (req, res) => {
           error: "National Identification Number (NIN) must be exactly 11 digits.",
         });
       }
-      const existingNin = await Donor.findOne({ nin: cleanNin });
+      const incomingNinHash = hashNin(cleanNin);
+      const existingNin = await Donor.findOne({
+        $or: [
+          { ninHash: incomingNinHash },
+          { nin: cleanNin },
+        ],
+      });
       if (existingNin) {
         return res.status(400).json({
           error: "A donor account with this National Identification Number (NIN) is already registered.",

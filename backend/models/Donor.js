@@ -79,6 +79,7 @@ const donorSchema = new mongoose.Schema({
   homeHospitalId: { type: mongoose.Schema.Types.ObjectId, ref: "Hospital" },
   allergies: { type: String, default: '' },
   nin: { type: String, trim: true, select: false },
+  ninHash: { type: String, trim: true, select: false },
   ninMasked: { type: String, trim: true },
   donationTypePreference: {
     type: String,
@@ -121,6 +122,7 @@ const donorSchema = new mongoose.Schema({
 
 donorSchema.index({ location: "2dsphere" });
 donorSchema.index({ isVerified: 1 });
+donorSchema.index({ ninHash: 1 }, { sparse: true });
 
 // Async/await pre-save hook – no 'next' parameter
 donorSchema.pre("save", async function () {
@@ -135,10 +137,13 @@ donorSchema.pre("save", async function () {
     if (this.bloodGroup) this.bloodGroupSelfReported = this.bloodGroup;
   }
 
-  // Auto-mask NIN if provided
+  // Auto-hash and auto-mask NIN if provided, then wipe plaintext NIN (NDPA 2023)
   if (this.isModified("nin") && this.nin) {
+    const { hashNin, maskNin } = require("../utils/nin");
     const cleanNin = this.nin.replace(/\D/g, '');
-    this.ninMasked = cleanNin.length >= 4 ? '*******' + cleanNin.slice(-4) : cleanNin;
+    this.ninMasked = maskNin(cleanNin);
+    this.ninHash = hashNin(cleanNin);
+    this.nin = undefined; // Wipe plaintext so it is never persisted to database
   }
   
   // Hash password if modified
