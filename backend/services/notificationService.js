@@ -56,6 +56,7 @@ const REPLY_TO = process.env.SMTP_REPLY_TO || '';
 // A mailto: or https: unsubscribe target. When set, every notification carries
 // List-Unsubscribe (+ one-click) headers — a strong deliverability signal and a
 // requirement for bulk senders under Gmail/Yahoo's 2024 rules.
+const LIST_UNSUBSCRIBE = process.env.SMTP_LIST_UNSUBSCRIBE || '';
 const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 const APP_URL = getFrontendBaseUrl();
 
