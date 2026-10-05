@@ -83,8 +83,13 @@ router.post('/login', async (req, res) => {
 router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
   const generic = { message: 'If that email is registered, a reset link has been sent.' };
   try {
-    const donor = await Donor.findOne({ email: req.body.email });
+    const rawEmail = req.body.email || '';
+    const normalizedEmail = rawEmail.trim().toLowerCase();
+    console.log(`[Donor Forgot Password] Request received for: "${rawEmail}" (normalized: "${normalizedEmail}")`);
+
+    const donor = await Donor.findOne({ email: normalizedEmail });
     if (donor) {
+      console.log(`[Donor Forgot Password] Found donor account for "${donor.name}". Generating reset token and sending email...`);
       const { raw, hash, expiry } = generateResetToken();
       donor.resetTokenHash = hash;
       donor.resetTokenExpiry = expiry;
@@ -95,6 +100,8 @@ router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res)
       sendEmail(donor.email, e.subject, e.text, e.html).catch((err) =>
         console.error('Donor reset email failed:', err.message)
       );
+    } else {
+      console.warn(`[Donor Forgot Password] No donor account found matching: "${normalizedEmail}". Check that this account is registered.`);
     }
     res.json(generic);
   } catch (err) {

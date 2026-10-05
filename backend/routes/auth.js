@@ -117,8 +117,13 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
   const generic = { message: 'If that email is registered, a reset link has been sent.' };
   try {
-    const user = await User.findOne({ email: req.body.email });
+    const rawEmail = req.body.email || '';
+    const normalizedEmail = rawEmail.trim().toLowerCase();
+    console.log(`[Staff Forgot Password] Request received for: "${rawEmail}" (normalized: "${normalizedEmail}")`);
+
+    const user = await User.findOne({ email: normalizedEmail });
     if (user && user.isActive) {
+      console.log(`[Staff Forgot Password] Found active user account for "${user.name}". Generating reset token and sending email...`);
       const { raw, hash, expiry } = generateResetToken();
       user.resetTokenHash = hash;
       user.resetTokenExpiry = expiry;
@@ -130,6 +135,8 @@ router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res)
       sendEmail(user.email, e.subject, e.text, e.html).catch((err) =>
         console.error('Reset email failed:', err.message)
       );
+    } else {
+      console.warn(`[Staff Forgot Password] No active staff/admin user found matching: "${normalizedEmail}". Check that this account is registered.`);
     }
     res.json(generic);
   } catch (err) {

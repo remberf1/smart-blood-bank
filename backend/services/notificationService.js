@@ -197,6 +197,7 @@ async function sendEmail(to, subject, text, html) {
   }
 
   const { name: fromName, email: fromEmail } = parseEmailSender(EMAIL_FROM);
+  console.log(`📤 [Email Dispatch] Request to send to "${to}" (subject: "${subject}") via ${BREVO_API_KEY ? 'Brevo' : RESEND_API_KEY ? 'Resend' : 'SMTP'}`);
 
   // 1. Try Resend via HTTPS (Port 443)
   if (RESEND_API_KEY) {
@@ -224,9 +225,9 @@ async function sendEmail(to, subject, text, html) {
         console.log(`✅ [Resend] Email sent to ${to} (id: ${data.id})`);
         return { sent: true, id: data.id, provider: 'resend' };
       }
-      console.warn('⚠️ [Resend] Send failed:', data);
+      console.warn(`⚠️ [Resend] Send failed (status ${res.status}):`, JSON.stringify(data));
     } catch (resendErr) {
-      console.warn('⚠️ [Resend] Request failed:', resendErr.message);
+      console.warn('⚠️ [Resend] Request network error:', resendErr.message);
     }
   }
 
@@ -254,9 +255,9 @@ async function sendEmail(to, subject, text, html) {
         console.log(`✅ [Brevo] Email sent to ${to} (messageId: ${data.messageId})`);
         return { sent: true, id: data.messageId, provider: 'brevo' };
       }
-      console.warn('⚠️ [Brevo] Send failed:', data);
+      console.warn(`⚠️ [Brevo] Send failed (status ${res.status}):`, JSON.stringify(data));
     } catch (brevoErr) {
-      console.warn('⚠️ [Brevo] Request failed:', brevoErr.message);
+      console.warn('⚠️ [Brevo] Request network error:', brevoErr.message);
     }
   }
 
